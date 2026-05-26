@@ -83,3 +83,14 @@ El sistema emula un servidor **Hapi FHIR R4**, exponiendo endpoints estandarizad
 
 ---
 **Desarrollado para la Clase del Estimado - Parcial Final - Corposucre 2026**
+
+## imagenes del projecto
+<img width="1263" height="634" alt="image" src="https://github.com/user-attachments/assets/7c5b3829-5fbb-4ba5-a1dd-a0f79cdf1513" />
+
+<img width="918" height="798" alt="image" src="https://github.com/user-attachments/assets/8139fc4e-c5b4-484f-98f8-b57293c9ad00" />
+
+<img width="855" height="902" alt="image" src="https://github.com/user-attachments/assets/70e02d4b-a871-4f76-a870-99b4ff387fb6" />
+
+<img width="832" height="934" alt="image" src="https://github.com/user-attachments/assets/108c64d3-bdd5-4187-8622-cf19fbcbab5f" />
+
+<img width="1227" height="530" alt="image" src="https://github.com/user-attachments/assets/57975cd7-f4c8-44f4-9e03-feedbd25fbff" />
