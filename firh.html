@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Historia Clínica - FIRH</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+    }
+
+    header {
+      background: #2563eb;
+      color: white;
+      padding: 1rem 1.5rem;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 1.4rem;
+    }
+
+    main {
+      padding: 1rem 1.5rem 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .section-card {
+      background: white;
+      border-radius: 0.5rem;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+    }
+
+    .section-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+
+    .section-body {
+      margin-top: 0.75rem;
+    }
+
+    .section-body.collapsed {
+      display: none;
+    }
+
+    .fields-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.75rem 1rem;
+    }
+
+    .form-field {
+      display: flex;
+      flex-direction: column;
+      font-size: 0.9rem;
+    }
+
+    .form-field label {
+      font-weight: 500;
+      margin-bottom: 0.15rem;
+    }
+
+    .form-field span.required {
+      color: #dc2626;
+      margin-left: 0.15rem;
+    }
+
+    .form-field input,
+    .form-field select,
+    .form-field textarea {
+      border: 1px solid #d4d4d8;
+      border-radius: 0.375rem;
+      padding: 0.4rem 0.5rem;
+      font-size: 0.9rem;
+    }
+
+    .form-field textarea {
+      min-height: 60px;
+      resize: vertical;
+    }
+
+    .helper-text {
+      font-size: 0.75rem;
+      color: #6b7280;
+      margin-top: 0.15rem;
+    }
+
+    .actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border-radius: 0.375rem;
+      border: none;
+      padding: 0.5rem 0.9rem;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: #2563eb;
+      color: white;
+    }
+
+    .btn-secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+
+    .status-bar {
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .status-bar.success {
+      color: #166534;
+    }
+
+    .status-bar.error {
+      color: #b91c1c;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      background: #e5e7eb;
+      color: #374151;
+      margin-left: 0.25rem;
+    }
+
+    .pill.pk {
+      background: #f97316;
+      color: white;
+    }
+  </style>
+  <script src="/static/auth-helper.js"></script>
+</head>
+
+<body>
+  <header>
+    <h1>Historia Clínica Distribuida - Formulario FIRH</h1>
+  </header>
+  <main>
+    <p>Complete los campos de la historia clínica y envíelos al backend. Los campos se generan dinámicamente a partir
+      del esquema expuesto en <code>/api/firh/campos</code>.</p>
+
+    <div class="actions">
+      <button id="reload-schema" class="btn-secondary">↻ Recargar definición de campos</button>
+      <button id="collapse-all" class="btn-secondary">Colapsar todo</button>
+      <button id="expand-all" class="btn-secondary">Expandir todo</button>
+    </div>
+
+    <div id="sections-container"></div>
+
+    <div class="actions">
+      <button id="submit-all" class="btn-primary">Guardar historia clínica completa</button>
+    </div>
+
+    <div id="triage-history" class="section-card" style="display: none;">
+      <div class="section-header">
+        <h2>Historial de Triage (Observation FHIR)</h2>
+      </div>
+      <div id="triage-list" class="section-body">
+        <!-- Se llena vía JS -->
+      </div>
+    </div>
+
+    <div id="status" class="status-bar"></div>
+  </main>
+
+  <script>
+    const API_CAMPOS = '/api/firh/campos';
+    const API_CARGAR = '/api/firh/cargar';
+
+    const sectionsContainer = document.getElementById('sections-container');
+    const statusBar = document.getElementById('status');
+
+    const reloadBtn = document.getElementById('reload-schema');
+    const collapseAllBtn = document.getElementById('collapse-all');
+    const expandAllBtn = document.getElementById('expand-all');
+    const submitAllBtn = document.getElementById('submit-all');
+
+    function setStatus(message, type = '') {
+      statusBar.textContent = message;
+      statusBar.className = 'status-bar ' + (type || '');
+    }
+
+    // ==================== CREAR INPUTS ====================
+    function createFieldInput(sectionKey, fieldKey, fieldDef) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'form-field';
+
+      const label = document.createElement('label');
+      label.setAttribute('for', `${sectionKey}__${fieldKey}`);
+      label.textContent = fieldDef.etiqueta || fieldKey;
+
+      if (fieldDef.requerido) {
+        const req = document.createElement('span');
+        req.className = 'required';
+        req.textContent = '*';
+        label.appendChild(req);
+      }
+
+      wrapper.appendChild(label);
+
+      let input;
+      const tipo = fieldDef.tipo || 'text';
+
+      if (tipo === 'textarea') {
+        input = document.createElement('textarea');
+      } else {
+        input = document.createElement('input');
+
+        if (tipo === 'number') input.type = 'number';
+        else if (tipo === 'date') input.type = 'date';
+        else if (tipo === 'datetime-local' || tipo === 'datetime') input.type = 'datetime-local';
+        else input.type = 'text';
+      }
+
+      input.id = `${sectionKey}__${fieldKey}`;
+      input.name = `${sectionKey}.${fieldKey}`;
+
+      if (fieldDef.requerido) input.required = true;
+
+      wrapper.appendChild(input);
+
+      return wrapper;
+    }
+
+    // ==================== RENDER SECCIONES ====================
+    function renderSections(schema) {
+      sectionsContainer.innerHTML = '';
+
+      Object.entries(schema).forEach(([sectionKey, sectionValue]) => {
+        const sectionCard = document.createElement('section');
+        sectionCard.className = 'section-card';
+
+        const header = document.createElement('div');
+        header.className = 'section-header';
+
+        const title = document.createElement('h2');
+        title.textContent = sectionKey.toUpperCase();
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.textContent = 'Colapsar';
+        toggleBtn.className = 'btn-secondary';
+
+        header.appendChild(title);
+        header.appendChild(toggleBtn);
+
+        const body = document.createElement('div');
+        body.className = 'section-body';
+
+        const grid = document.createElement('div');
+        grid.className = 'fields-grid';
+
+        const fields = sectionValue.campos || sectionValue;
+
+        Object.entries(fields).forEach(([fieldKey, fieldDef]) => {
+          grid.appendChild(
+            createFieldInput(sectionKey, fieldKey, fieldDef)
+          );
+        });
+
+        body.appendChild(grid);
+
+        toggleBtn.onclick = () => {
+          body.classList.toggle('collapsed');
+        };
+
+        sectionCard.appendChild(header);
+        sectionCard.appendChild(body);
+        sectionsContainer.appendChild(sectionCard);
+      });
+    }
+
+    // ==================== CARGAR SCHEMA ====================
+    async function loadSchema() {
+      setStatus('Cargando definición de campos…');
+
+      const res = await AuthHelper.authenticatedFetch(API_CAMPOS);
+      if (!res.ok) throw new Error('Error cargando schema');
+
+      const schema = await res.json();
+
+      renderSections(schema);
+
+      setStatus('Definición cargada', 'success');
+
+      return true;
+    }
+
+    // ==================== RECOLECTAR DATA ====================
+    function collectSectionData(sectionKey) {
+      const data = {};
+      const inputs = sectionsContainer.querySelectorAll(`[name^="${sectionKey}."]`);
+
+      inputs.forEach(el => {
+        const [, fieldKey] = el.name.split('.');
+
+        let value = el.value;
+
+        if (value === '') {
+          data[fieldKey] = null;
+          return;
+        }
+
+        if (el.type === 'number') data[fieldKey] = Number(value);
+        else data[fieldKey] = value;
+      });
+
+      return data;
+    }
+
+    // ==================== SUBMIT FIRH ====================
+    async function submitAll() {
+      try {
+        setStatus('Guardando FIRH...');
+
+        const payload = {
+          identificacion_usuario: collectSectionData('usuario'),
+          atencion: collectSectionData('atencion'),
+          tecnologias_salud: collectSectionData('tecnologia_salud'),
+          diagnosticos: collectSectionData('diagnostico'),
+          egreso: collectSectionData('egreso')
+        };
+
+        const paciente_id = document.getElementById('usuario__paciente_id')?.value;
+
+        const res = await AuthHelper.authenticatedFetch(API_CARGAR, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tabla: 'completo',
+            datos: {
+              paciente_id,
+              ...payload
+            }
+          })
+        });
+
+        if (!res.ok) throw new Error('Error guardando FIRH');
+
+        setStatus('FIRH guardado correctamente', 'success');
+
+      } catch (err) {
+        console.error(err);
+        setStatus(err.message, 'error');
+      }
+    }
+
+    // ==================== CARGAR PACIENTE ====================
+    async function cargarPaciente() {
+      const partes = window.location.pathname.split('/');
+      const pacienteId = partes[2];
+      if (!pacienteId) return;
+
+      try {
+        // CORREGIDO: Solicitud autenticada para el detalle del paciente
+        const res = await AuthHelper.authenticatedFetch(`/api/paciente/${pacienteId}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!res.ok) throw new Error("Error al consultar los datos del paciente.");
+        const data = await res.json();
+
+        // RENDER TRIAGE HISTORY
+        const triageContainer = document.getElementById('triage-history');
+        const triageList = document.getElementById('triage-list');
+        if (data.triage && data.triage.length > 0) {
+          triageContainer.style.display = 'block';
+          triageList.innerHTML = data.triage.map(t => `
+            <div style="border-bottom: 1px solid #eee; padding: 10px 0; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong>Nivel ${t.nivel_triage}</strong> - ${t.motivo_consulta || 'Sin motivo'}<br>
+                <small>${t.presion_arterial} mmHg | ${t.frecuencia_cardiaca} LPM | ${t.temperatura}°C | ${t.saturacion_oxigeno}% O2</small>
+              </div>
+              <div style="text-align: right;">
+                <span class="pill">${t.sede}</span><br>
+                <small>${new Date(t.fecha_registro).toLocaleString()}</small>
+              </div>
+            </div>
+          `).join('');
+        }
+
+        // ==================== LLENADO AUTOMÁTICO INTELIGENTE ====================
+        // Regla: Lo ya guardado en FIRH tiene prioridad. 
+        // Si no hay FIRH guardado, se usa la precarga (datos heredados de registro/triage).
+        
+        const schemaRes = await AuthHelper.authenticatedFetch(API_CAMPOS);
+        const schema = await schemaRes.json();
+
+        Object.keys(schema).forEach(sectionKey => {
+          const defaultData = data.firh_preload[sectionKey] || {};
+          const savedData = data.firh_guardado[sectionKey] || {};
+
+          // Iteramos por los campos definidos en el esquema para esta sección
+          const campos = schema[sectionKey].campos || schema[sectionKey];
+          
+          Object.keys(campos).forEach(fieldKey => {
+            const inputId = `${sectionKey}__${fieldKey}`;
+            const input = document.getElementById(inputId);
+            
+            if (input) {
+              // Valor final = Guardado ? Guardado : Heredado
+              const finalValue = (savedData[fieldKey] !== undefined && savedData[fieldKey] !== null) 
+                                 ? savedData[fieldKey] 
+                                 : defaultData[fieldKey];
+
+              if (finalValue !== undefined && finalValue !== null) {
+                if (input.type === 'date' && typeof finalValue === 'string') {
+                  input.value = finalValue.split('T')[0];
+                } else if (input.type === 'datetime-local' && typeof finalValue === 'string') {
+                  input.value = finalValue.slice(0, 16);
+                } else {
+                  input.value = finalValue;
+                }
+              }
+            }
+          });
+        });
+
+        console.log("Mapeo completo procesado.");
+      } catch (err) {
+        console.error("Error cargando campos:", err);
+      }
+    }
+
+    // ==================== CARGAR PACIENTES GENERAL (API FHIR) ====================
+    async function loadPatients() {
+      try {
+        // CORREGIDO: Solicitud autenticada para la lista FHIR
+        const response = await AuthHelper.authenticatedFetch('/api/v1/fhir/patients?page=1&size=10', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || "No autorizado para cargar la lista de pacientes.");
+        }
+
+        const data = await response.json();
+        console.log("Pacientes FHIR cargados con éxito:", data.patients);
+        return data;
+
+      } catch (error) {
+        console.error("Error al cargar pacientes:", error.message);
+        const errorContainer = document.getElementById('error-message');
+        if (errorContainer) errorContainer.innerText = `Error al cargar pacientes: ${error.message}`;
+      }
+    }
+    // ==================== INIT ====================
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        await loadSchema();
+        await new Promise(requestAnimationFrame);
+
+        // Ejecución secuencial controlada
+        await loadPatients();    // Carga la lista general primero
+        await cargarPaciente();  // Carga el detalle del paciente si aplica
+
+      } catch (e) {
+        console.error("Error en la inicialización:", e);
+      }
+    });
+
+    // ==================== EVENTS ====================
+    reloadBtn.onclick = loadSchema;
+    submitAllBtn.onclick = submitAll;
+    collapseAllBtn.onclick = () => {
+      document.querySelectorAll('.section-body').forEach(b => b.classList.add('collapsed'));
+    };
+    expandAllBtn.onclick = () => {
+      document.querySelectorAll('.section-body').forEach(b => b.classList.remove('collapsed'));
+    };
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estado de Nodos Regionales - WAN</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: white;
+            color: #667eea;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(255, 255, 255, 0.3);
+        }
+
+        .content {
+            padding: 2rem;
+        }
+
+        .grid-nodos {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 2rem;
+            margin-top: 1rem;
+        }
+
+        .nodo-card {
+            border: 2px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 1.5rem;
+            background: #ffffff;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .nodo-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+        }
+
+        .nodo-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .nodo-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .nodo-title i {
+            font-size: 2rem;
+            color: #667eea;
+        }
+
+        .nodo-name {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #2d3748;
+        }
+
+        .nodo-url {
+            font-size: 0.85rem;
+            color: #718096;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 700;
+            font-size: 0.9rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+        }
+
+        .status-online {
+            background-color: #c6f6d5;
+            color: #22543d;
+        }
+
+        .status-offline {
+            background-color: #fed7d7;
+            color: #742a2a;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-online .status-dot {
+            background-color: #38a169;
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-offline .status-dot {
+            background-color: #e53e3e;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(0.9);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.2);
+                opacity: 0.5;
+            }
+
+            100% {
+                transform: scale(0.9);
+                opacity: 1;
+            }
+        }
+
+        .nodo-details {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 1rem;
+            font-size: 0.9rem;
+            color: #4a5568;
+            margin-bottom: 1.5rem;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.4rem 0;
+            border-bottom: 1px solid #edf2f7;
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: #718096;
+        }
+
+        .refresh-notice {
+            text-align: center;
+            color: #a0aec0;
+            font-size: 0.85rem;
+            margin-top: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+        }
+    </style>
+    <script src="/static/auth-helper.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                <i class="ph ph-activity"></i>
+                Monitoreo de Nodos Regionales (WAN)
+            </h1>
+            <div class="header-actions">
+                <a href="/api/v1/fhir/metadata" target="_blank" class="btn btn-primary">
+                    <i class="ph ph-file-code"></i>
+                    Metadata FHIR
+                </a>
+                <a href="http://localhost:3005" target="_blank" class="btn btn-primary" style="background: #f7931e; color: white;">
+                    <i class="ph ph-chart-pie"></i>
+                    Grafana Dashboard
+                </a>
+                <a href="/consulta-hc" class="btn btn-primary">
+                    <i class="ph ph-arrow-left"></i>
+                    Volver a Consultas
+                </a>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="grid-nodos">
+                <div class="nodo-card" id="nodo-sincelejo">
+                    <div class="nodo-header">
+                        <div class="nodo-title">
+                            <i class="ph ph-buildings"></i>
+                            <div>
+                                <div class="nodo-name">Sede Sincelejo</div>
+                                <div class="nodo-url">Puerto local: 3001</div>
+                            </div>
+                        </div>
+                        <div class="status-indicator status-offline" id="status-3001">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Desconectado</span>
+                        </div>
+                    </div>
+                    <div class="nodo-details">
+                        <div class="detail-row">
+                            <span class="detail-label">Instancia Docker:</span>
+                            <span>app_sincelejo</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Latencia (Ping):</span>
+                            <span id="ping-3001">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="nodo-card" id="nodo-bogota">
+                    <div class="nodo-header">
+                        <div class="nodo-title">
+                            <i class="ph ph-buildings"></i>
+                            <div>
+                                <div class="nodo-name">Sede Bogotá</div>
+                                <div class="nodo-url">Puerto local: 3002</div>
+                            </div>
+                        </div>
+                        <div class="status-indicator status-offline" id="status-3002">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Desconectado</span>
+                        </div>
+                    </div>
+                    <div class="nodo-details">
+                        <div class="detail-row">
+                            <span class="detail-label">Instancia Docker:</span>
+                            <span>app_bogota</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Latencia (Ping):</span>
+                            <span id="ping-3002">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="nodo-card" id="nodo-medellin">
+                    <div class="nodo-header">
+                        <div class="nodo-title">
+                            <i class="ph ph-buildings"></i>
+                            <div>
+                                <div class="nodo-name">Sede Medellín</div>
+                                <div class="nodo-url">Puerto local: 3003</div>
+                            </div>
+                        </div>
+                        <div class="status-indicator status-offline" id="status-3003">
+                            <span class="status-dot"></span>
+                            <span class="status-text">Desconectado</span>
+                        </div>
+                    </div>
+                    <div class="nodo-details">
+                        <div class="detail-row">
+                            <span class="detail-label">Instancia Docker:</span>
+                            <span>app_medellin</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Latencia (Ping):</span>
+                            <span id="ping-3003">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="refresh-notice">
+                <i class="ph ph-arrows-clockwise"></i>
+                Actualizando estado automáticamente cada 5 segundos en tiempo real.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const HOST = window.location.hostname;
+
+        const sedes = [
+            { puerto: '3001', nombre: 'Sincelejo' },
+            { puerto: '3002', nombre: 'Bogotá' },
+            { puerto: '3003', nombre: 'Medellín' }
+        ];
+
+        async function actualizarEstado() {
+
+            for (let sede of sedes) {
+
+                const indicator = document.getElementById(`status-${sede.puerto}`);
+                const pingEl = document.getElementById(`ping-${sede.puerto}`);
+
+                const inicio = Date.now();
+
+                try {
+                    const resp = await AuthHelper.authenticatedFetch(`http://${HOST}:${sede.puerto}/api/v1/fhir/patients?size=1`, {
+                        method: 'GET',
+                        cache: 'no-cache'
+                    }, sede.puerto);
+
+                    const fin = Date.now();
+                    const latencia = fin - inicio;
+
+                    if (resp.ok) {
+
+                        indicator.className = "status-indicator status-online";
+
+                        indicator.querySelector('.status-text').textContent = "Activo";
+
+                        pingEl.textContent = `${latencia} ms`;
+
+                    } else {
+
+                        marcarOffline(indicator, pingEl);
+
+                    }
+
+                } catch (e) {
+
+                    marcarOffline(indicator, pingEl);
+
+                }
+            }
+        }
+
+        function marcarOffline(indicator, pingEl) {
+
+            indicator.className = "status-indicator status-offline";
+
+            indicator.querySelector('.status-text').textContent = "Desconectado";
+
+            pingEl.textContent = "Inalcanzable";
+        }
+
+        window.addEventListener('load', () => {
+
+            actualizarEstado();
+
+            setInterval(actualizarEstado, 5000);
+
+        });
+    </script>
+
+</body>
+
+</html>

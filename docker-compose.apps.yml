@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # --- INFRAESTRUCTURA DE LA SEDE SINCELEJO ---
+  db_sincelejo:
+    image: bitnami/postgresql:15
+    container_name: db_sincelejo
+    ports:
+      - "5433:5432" # Puerto alterno para no colisionar con la DB Global
+    environment:
+      - POSTGRESQL_USERNAME=admin_clinica
+      - POSTGRESQL_PASSWORD=password_seguro
+      - POSTGRESQL_DATABASE=historia_clinica_global
+    volumes:
+      - pg_sincelejo_data:/bitnami/postgresql
+
+  app_sincelejo:
+    build: .
+    container_name: app_sincelejo
+    ports:
+      - "3001:3000"
+    environment:
+      - SEDE_ACTUAL=Sincelejo
+      - DB_HOST=db_sincelejo
+      - KAFKA_BROKER=central_kafka:9092
+    depends_on:
+      - db_sincelejo
+
+  # --- INFRAESTRUCTURA DE LA SEDE BOGOTÁ (Para pruebas de mudanza) ---
+  db_bogota:
+    image: bitnami/postgresql:15
+    container_name: db_bogota
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRESQL_USERNAME=admin_clinica
+      - POSTGRESQL_PASSWORD=password_seguro
+      - POSTGRESQL_DATABASE=historia_clinica_global
+    volumes:
+      - pg_bogota_data:/bitnami/postgresql
+
+  app_bogota:
+    build: .
+    container_name: app_bogota
+    ports:
+      - "3002:3000"
+    environment:
+      - SEDE_ACTUAL=Bogota
+      - DB_HOST=db_bogota
+      - KAFKA_BROKER=central_kafka:9092
+    depends_on:
+      - db_bogota
+
+volumes:
+  pg_sincelejo_data:
+    driver: local
+  pg_bogota_data:
+    driver: local

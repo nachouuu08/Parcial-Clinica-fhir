@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'clinica-apps'
+    static_configs:
+      - targets: ['app_sincelejo:3000', 'app_bogota:3000', 'app_medellin:3000']

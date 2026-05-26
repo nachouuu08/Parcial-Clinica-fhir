@@ -1,0 +1,13 @@
+{
+  "name": "sistema-clinico-distribuido",
+  "version": "1.0.0",
+  "description": "Servicio clínico con replicación local y eventos WAN",
+  "main": "server.js",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.3",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.11.5"
+  }
+}

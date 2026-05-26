@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Módulo de Triage - FHIR</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="/static/auth-helper.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .form-container {
+            padding: 2rem;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-group.full-width {
+            grid-column: 1 / -1;
+        }
+
+        label {
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 0.9rem;
+        }
+
+        input, select, textarea {
+            padding: 0.75rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-family: inherit;
+        }
+
+        .triage-selector {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .triage-btn {
+            padding: 1rem;
+            border: 2px solid #e2e8f0;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            text-align: center;
+            font-weight: 700;
+            transition: all 0.2s;
+        }
+
+        .triage-1 { color: #e53e3e; border-color: #feb2b2; }
+        .triage-1.active { background: #e53e3e; color: white; border-color: #e53e3e; }
+        
+        .triage-2 { color: #ed8936; border-color: #fbd38d; }
+        .triage-2.active { background: #ed8936; color: white; border-color: #ed8936; }
+        
+        .triage-3 { color: #ecc94b; border-color: #faf089; }
+        .triage-3.active { background: #ecc94b; color: white; border-color: #ecc94b; }
+        
+        .triage-4 { color: #48bb78; border-color: #9ae6b4; }
+        .triage-4.active { background: #48bb78; color: white; border-color: #48bb78; }
+        
+        .triage-5 { color: #4299e1; border-color: #90cdf4; }
+        .triage-5.active { background: #4299e1; color: white; border-color: #4299e1; }
+
+        .btn-submit {
+            background: #667eea;
+            color: white;
+            padding: 1rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 700;
+            width: 100%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            display: none;
+        }
+
+        .alert.success { background: #c6f6d5; color: #22543d; border: 1px solid #9ae6b4; }
+        .alert.error { background: #fed7d7; color: #742a2a; border: 1px solid #fc8181; }
+        .alert.show { display: block; }
+
+        .header-nav {
+            padding: 1rem 2rem;
+            background: #f7fafc;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .nav-link {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i class="ph ph-heartbeat"></i> Módulo de Triage</h1>
+            <p>Clasificación de Riesgo - SMART on FHIR</p>
+        </div>
+
+        <div class="header-nav">
+            <a href="/" class="nav-link"><i class="ph ph-house"></i> Dashboard</a>
+            <a href="/consulta-hc" class="nav-link"><i class="ph ph-folder-open"></i> Consultas</a>
+        </div>
+
+        <div class="form-container">
+            <div id="alert" class="alert"></div>
+
+            <form id="triageForm">
+                <div class="form-group" style="margin-bottom: 2rem;">
+                    <label for="paciente_id">Documento del Paciente</label>
+                    <input type="text" id="paciente_id" required placeholder="Ingrese identificación del paciente">
+                </div>
+
+                <h3 style="margin-bottom: 1rem; color: #2d3748;">Signos Vitales (Observations)</h3>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Tensión Arterial (mmHg)</label>
+                        <input type="text" id="presion" placeholder="120/80">
+                    </div>
+                    <div class="form-group">
+                        <label>Freq. Cardíaca (LPM)</label>
+                        <input type="number" id="frecuencia" placeholder="75">
+                    </div>
+                    <div class="form-group">
+                        <label>Temperatura (°C)</label>
+                        <input type="number" step="0.1" id="temperatura" placeholder="36.5">
+                    </div>
+                    <div class="form-group">
+                        <label>Saturación O2 (%)</label>
+                        <input type="number" id="saturacion" placeholder="98">
+                    </div>
+                </div>
+
+                <div class="form-group full-width" style="margin-bottom: 2rem;">
+                    <label>Nivel de Triage (Clasificación Manchester)</label>
+                    <div class="triage-selector">
+                        <div class="triage-btn triage-1" onclick="selectTriage(1)">1</div>
+                        <div class="triage-btn triage-2" onclick="selectTriage(2)">2</div>
+                        <div class="triage-btn triage-3" onclick="selectTriage(3)">3</div>
+                        <div class="triage-btn triage-4" onclick="selectTriage(4)">4</div>
+                        <div class="triage-btn triage-5" onclick="selectTriage(5)">5</div>
+                    </div>
+                    <input type="hidden" id="nivel_triage" required>
+                </div>
+
+                <div class="form-group full-width">
+                    <label>Motivo de Consulta / Observaciones</label>
+                    <textarea id="motivo" placeholder="Describa brevemente el estado del paciente..."></textarea>
+                </div>
+
+                <button type="submit" class="btn-submit" style="margin-top: 2rem;">
+                    <i class="ph ph-check-circle"></i> Guardar Triage
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let selectedLevel = null;
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const id = params.get('id');
+            if (id) {
+                document.getElementById('paciente_id').value = id;
+            }
+        });
+
+        function selectTriage(level) {
+            selectedLevel = level;
+            document.getElementById('nivel_triage').value = level;
+            
+            document.querySelectorAll('.triage-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`.triage-${level}`).classList.add('active');
+        }
+
+        document.getElementById('triageForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (!selectedLevel) {
+                showAlert('Por favor seleccione un nivel de triage', 'error');
+                return;
+            }
+
+            const payload = {
+                paciente_id: document.getElementById('paciente_id').value,
+                presion_arterial: document.getElementById('presion').value,
+                frecuencia_cardiaca: parseInt(document.getElementById('frecuencia').value) || 0,
+                temperatura: parseFloat(document.getElementById('temperatura').value) || 0,
+                saturacion_oxigeno: parseInt(document.getElementById('saturacion').value) || 0,
+                nivel_triage: selectedLevel,
+                motivo_consulta: document.getElementById('motivo').value
+            };
+
+            try {
+                const response = await AuthHelper.authenticatedFetch('/api/triage', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showAlert('✅ Triage registrado correctamente y sincronizado en la red.', 'success');
+                    document.getElementById('triageForm').reset();
+                    document.querySelectorAll('.triage-btn').forEach(b => b.classList.remove('active'));
+                    selectedLevel = null;
+                } else {
+                    showAlert('❌ Error: ' + (result.detalle || 'No se pudo guardar'), 'error');
+                }
+            } catch (error) {
+                showAlert('❌ Error de conexión: ' + error.message, 'error');
+            }
+        });
+
+        function showAlert(msg, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = msg;
+            alert.className = `alert ${type} show`;
+            setTimeout(() => alert.classList.remove('show'), 5000);
+        }
+    </script>
+</body>
+
+</html>
