@@ -161,6 +161,7 @@
 <body>
   <header>
     <h1>Historia Clínica Distribuida - Formulario FIRH</h1>
+    <p id="paciente-banner" style="margin:0.5rem 0 0;font-size:0.95rem;opacity:0.9;"></p>
   </header>
   <main>
     <p>Complete los campos de la historia clínica y envíelos al backend. Los campos se generan dinámicamente a partir
@@ -196,6 +197,8 @@
 
     const sectionsContainer = document.getElementById('sections-container');
     const statusBar = document.getElementById('status');
+    const pacienteBanner = document.getElementById('paciente-banner');
+    let schemaCache = null;
 
     const reloadBtn = document.getElementById('reload-schema');
     const collapseAllBtn = document.getElementById('collapse-all');
@@ -304,12 +307,89 @@
       if (!res.ok) throw new Error('Error cargando schema');
 
       const schema = await res.json();
+      schemaCache = schema;
 
       renderSections(schema);
 
       setStatus('Definición cargada', 'success');
 
+      return schema;
+    }
+
+    const ALIAS_CAMPOS = {
+      dx_rel_1: ['diagnostico_rel_1'],
+      dx_rel_2: ['diagnostico_rel_2'],
+      dx_rel_3: ['diagnostico_rel_3']
+    };
+
+    function valorCampoGuardado(savedData, fieldKey) {
+      if (savedData[fieldKey] !== undefined && savedData[fieldKey] !== null && savedData[fieldKey] !== '') {
+        return savedData[fieldKey];
+      }
+      const aliases = ALIAS_CAMPOS[fieldKey] || [];
+      for (const alt of aliases) {
+        if (savedData[alt] !== undefined && savedData[alt] !== null && savedData[alt] !== '') {
+          return savedData[alt];
+        }
+      }
+      return undefined;
+    }
+
+    /** Ignora placeholders vacíos o "1" en textos; fechas inválidas 0001-01-01. */
+    function esValorUtil(valor, fieldDef, fieldKey) {
+      if (valor === null || valor === undefined || valor === '') return false;
+      const tipo = fieldDef?.tipo || 'text';
+      const s = String(valor).trim();
+
+      if (tipo === 'date' || tipo === 'datetime' || tipo === 'datetime-local') {
+        return !s.startsWith('0001-01-01');
+      }
+      if (tipo === 'number') {
+        const n = Number(valor);
+        if (fieldKey === 'edad' && n === 1) return false;
+        return !Number.isNaN(n);
+      }
+      if (tipo === 'boolean') return true;
+      if (s === '1') return false;
       return true;
+    }
+
+    function aplicarValorAlInput(input, finalValue) {
+      if (finalValue === undefined || finalValue === null || finalValue === '') return;
+      if (input.type === 'checkbox') {
+        input.checked = finalValue === true || finalValue === 'true' || finalValue === '1';
+        return;
+      }
+      if (input.type === 'date' && typeof finalValue === 'string') {
+        input.value = finalValue.split('T')[0];
+      } else if (input.type === 'datetime-local' && typeof finalValue === 'string') {
+        input.value = finalValue.length >= 16 ? finalValue.slice(0, 16) : finalValue;
+      } else {
+        input.value = String(finalValue);
+      }
+    }
+
+    function aplicarDatosAlFormulario(schema, data) {
+      const firhGuardado = normalizarFirhCliente(data.firh_guardado);
+
+      Object.keys(schema).forEach(sectionKey => {
+        const defaultData = data.firh_preload?.[sectionKey] || {};
+        const savedData = firhGuardado[sectionKey] || {};
+        const campos = schema[sectionKey].campos || schema[sectionKey];
+
+        Object.keys(campos).forEach(fieldKey => {
+          const input = document.getElementById(`${sectionKey}__${fieldKey}`);
+          if (!input) return;
+
+          const fieldDef = campos[fieldKey];
+          const guardado = valorCampoGuardado(savedData, fieldKey);
+          const precarga = defaultData[fieldKey];
+          const finalValue = esValorUtil(guardado, fieldDef, fieldKey)
+            ? guardado
+            : (esValorUtil(precarga, fieldDef, fieldKey) ? precarga : undefined);
+          aplicarValorAlInput(input, finalValue);
+        });
+      });
     }
 
     // ==================== RECOLECTAR DATA ====================
@@ -334,20 +414,37 @@
       return data;
     }
 
+    function getPacienteIdFromUrl() {
+      const partes = window.location.pathname.split('/').filter(Boolean);
+      const idx = partes.indexOf('paciente');
+      return idx >= 0 && partes[idx + 1] ? decodeURIComponent(partes[idx + 1]) : null;
+    }
+
     // ==================== SUBMIT FIRH ====================
     async function submitAll() {
       try {
         setStatus('Guardando FIRH...');
 
-        const payload = {
-          identificacion_usuario: collectSectionData('usuario'),
-          atencion: collectSectionData('atencion'),
-          tecnologias_salud: collectSectionData('tecnologia_salud'),
-          diagnosticos: collectSectionData('diagnostico'),
-          egreso: collectSectionData('egreso')
-        };
+        const identificacionUsuarioData = collectSectionData('identificacion_usuario');
+        const atencionData = collectSectionData('atencion');
+        const tecnologiasSaludData = collectSectionData('tecnologias_salud');
+        const diagnosticosData = collectSectionData('diagnosticos');
+        const egresoData = collectSectionData('egreso');
 
-        const paciente_id = document.getElementById('usuario__paciente_id')?.value;
+        const paciente_id = getPacienteIdFromUrl() || identificacionUsuarioData.numero_documento;
+        if (!paciente_id) {
+          setStatus('Abra el formulario desde Consultar HC → Detalle del paciente.', 'error');
+          return;
+        }
+        identificacionUsuarioData.numero_documento = paciente_id;
+
+        const payload = {
+          identificacion_usuario: identificacionUsuarioData,
+          atencion: atencionData,
+          tecnologias_salud: tecnologiasSaludData,
+          diagnosticos: diagnosticosData,
+          egreso: egresoData
+        };
 
         const res = await AuthHelper.authenticatedFetch(API_CARGAR, {
           method: 'POST',
@@ -361,9 +458,15 @@
           })
         });
 
-        if (!res.ok) throw new Error('Error guardando FIRH');
+        const result = await res.json();
+        if (!res.ok || result.ok === false) {
+          throw new Error(result.detail || result.errores?.join?.(', ') || 'Error guardando FIRH');
+        }
 
         setStatus('FIRH guardado correctamente', 'success');
+        if (result.firh && schemaCache) {
+          aplicarDatosAlFormulario(schemaCache, { firh_guardado: result.firh, firh_preload: {} });
+        }
 
       } catch (err) {
         console.error(err);
@@ -371,23 +474,34 @@
       }
     }
 
+    function normalizarFirhCliente(firh) {
+      if (!firh) return {};
+      if (Array.isArray(firh)) return firh[0] && typeof firh[0] === 'object' ? firh[0] : {};
+      return typeof firh === 'object' ? firh : {};
+    }
+
     // ==================== CARGAR PACIENTE ====================
     async function cargarPaciente() {
-      const partes = window.location.pathname.split('/');
-      const pacienteId = partes[2];
-      if (!pacienteId) return;
+      const pacienteId = getPacienteIdFromUrl();
+      if (!pacienteId) {
+        pacienteBanner.textContent = 'Modo general (sin paciente seleccionado)';
+        return;
+      }
+
+      pacienteBanner.textContent = `Paciente: ${pacienteId}`;
 
       try {
-        // CORREGIDO: Solicitud autenticada para el detalle del paciente
-        const res = await AuthHelper.authenticatedFetch(`/api/paciente/${pacienteId}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
+        setStatus('Cargando historia clínica…');
 
-        if (!res.ok) throw new Error("Error al consultar los datos del paciente.");
+        const res = await AuthHelper.authenticatedFetch(
+          `/api/paciente/${encodeURIComponent(pacienteId)}`,
+          { method: 'GET', headers: { 'Content-Type': 'application/json' } }
+        );
+
         const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || 'Error al consultar los datos del paciente.');
+        }
 
         // RENDER TRIAGE HISTORY
         const triageContainer = document.getElementById('triage-history');
@@ -411,43 +525,18 @@
         // ==================== LLENADO AUTOMÁTICO INTELIGENTE ====================
         // Regla: Lo ya guardado en FIRH tiene prioridad. 
         // Si no hay FIRH guardado, se usa la precarga (datos heredados de registro/triage).
-        
-        const schemaRes = await AuthHelper.authenticatedFetch(API_CAMPOS);
-        const schema = await schemaRes.json();
 
-        Object.keys(schema).forEach(sectionKey => {
-          const defaultData = data.firh_preload[sectionKey] || {};
-          const savedData = data.firh_guardado[sectionKey] || {};
+        const schema = schemaCache || await loadSchema();
+        aplicarDatosAlFormulario(schema, data);
 
-          // Iteramos por los campos definidos en el esquema para esta sección
-          const campos = schema[sectionKey].campos || schema[sectionKey];
-          
-          Object.keys(campos).forEach(fieldKey => {
-            const inputId = `${sectionKey}__${fieldKey}`;
-            const input = document.getElementById(inputId);
-            
-            if (input) {
-              // Valor final = Guardado ? Guardado : Heredado
-              const finalValue = (savedData[fieldKey] !== undefined && savedData[fieldKey] !== null) 
-                                 ? savedData[fieldKey] 
-                                 : defaultData[fieldKey];
-
-              if (finalValue !== undefined && finalValue !== null) {
-                if (input.type === 'date' && typeof finalValue === 'string') {
-                  input.value = finalValue.split('T')[0];
-                } else if (input.type === 'datetime-local' && typeof finalValue === 'string') {
-                  input.value = finalValue.slice(0, 16);
-                } else {
-                  input.value = finalValue;
-                }
-              }
-            }
-          });
-        });
-
-        console.log("Mapeo completo procesado.");
+        const seccionesConDatos = Object.keys(normalizarFirhCliente(data.firh_guardado)).length;
+        setStatus(
+          'Datos autocompletados desde registro, triage y cuestionario (si el campo estaba vacío)',
+          'success'
+        );
       } catch (err) {
-        console.error("Error cargando campos:", err);
+        console.error('Error cargando campos:', err);
+        setStatus(`No se pudo cargar la historia: ${err.message}`, 'error');
       }
     }
 
@@ -482,18 +571,18 @@
       try {
         await loadSchema();
         await new Promise(requestAnimationFrame);
-
-        // Ejecución secuencial controlada
-        await loadPatients();    // Carga la lista general primero
-        await cargarPaciente();  // Carga el detalle del paciente si aplica
-
+        await cargarPaciente();
       } catch (e) {
-        console.error("Error en la inicialización:", e);
+        console.error('Error en la inicialización:', e);
+        setStatus(`Error al iniciar: ${e.message}`, 'error');
       }
     });
 
     // ==================== EVENTS ====================
-    reloadBtn.onclick = loadSchema;
+    reloadBtn.onclick = async () => {
+      await loadSchema();
+      await cargarPaciente();
+    };
     submitAllBtn.onclick = submitAll;
     collapseAllBtn.onclick = () => {
       document.querySelectorAll('.section-body').forEach(b => b.classList.add('collapsed'));

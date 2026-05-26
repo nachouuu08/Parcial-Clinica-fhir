@@ -10,11 +10,11 @@ services:
       - POSTGRES_USER=admin_clinica
       - POSTGRES_PASSWORD=password_seguro
       - POSTGRES_DB=historia_clinica_global
-    volumes: 
+    volumes:
       - pg_global_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin_clinica -d historia_clinica_global"]
+      test: [ "CMD-SHELL", "pg_isready -U admin_clinica -d historia_clinica_global" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -24,6 +24,11 @@ services:
     container_name: app_sincelejo
     ports: [ "3001:3000" ]
     networks: [ clinica_net ]
+    volumes:
+      - ./server.js:/usr/src/app/server.js
+      - ./firh.html:/usr/src/app/firh.html
+      - ./monitor-nodos.html:/usr/src/app/monitor-nodos.html
+      - ./static:/usr/src/app/static
     environment:
       - SEDE_ACTUAL=Sincelejo
       - DB_HOST=db_sincelejo
@@ -41,11 +46,11 @@ services:
       - POSTGRES_USER=admin_clinica
       - POSTGRES_PASSWORD=password_seguro
       - POSTGRES_DB=historia_clinica_global
-    volumes: 
+    volumes:
       - pg_bogota_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin_clinica -d historia_clinica_global"]
+      test: [ "CMD-SHELL", "pg_isready -U admin_clinica -d historia_clinica_global" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -55,6 +60,11 @@ services:
     container_name: app_bogota
     ports: [ "3002:3000" ]
     networks: [ clinica_net ]
+    volumes:
+      - ./server.js:/usr/src/app/server.js
+      - ./firh.html:/usr/src/app/firh.html
+      - ./monitor-nodos.html:/usr/src/app/monitor-nodos.html
+      - ./static:/usr/src/app/static
     environment:
       - SEDE_ACTUAL=Bogota
       - DB_HOST=db_bogota
@@ -72,20 +82,25 @@ services:
       - POSTGRES_USER=admin_clinica
       - POSTGRES_PASSWORD=password_seguro
       - POSTGRES_DB=historia_clinica_global
-    volumes: 
+    volumes:
       - pg_medellin_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin_clinica -d historia_clinica_global"]
+      test: [ "CMD-SHELL", "pg_isready -U admin_clinica -d historia_clinica_global" ]
       interval: 5s
       timeout: 5s
       retries: 5
 
   app_medellin:
-    build: .
     container_name: app_medellin
+    build: .
     ports: [ "3003:3000" ]
     networks: [ clinica_net ]
+    volumes:
+      - ./server.js:/usr/src/app/server.js
+      - ./firh.html:/usr/src/app/firh.html
+      - ./monitor-nodos.html:/usr/src/app/monitor-nodos.html
+      - ./static:/usr/src/app/static
     environment:
       - SEDE_ACTUAL=Medellin
       - DB_HOST=db_medellin

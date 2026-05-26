@@ -171,6 +171,54 @@ const pool = {
     }
 };
 
+/** Crea tablas/columnas faltantes al arranque (no depende de Kafka). */
+async function ensureDbSchema() {
+    const statements = [
+        `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS firh JSONB`,
+        `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS fecha_creacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP`,
+        `CREATE TABLE IF NOT EXISTS triage_records (
+            triage_id SERIAL PRIMARY KEY,
+            paciente_id VARCHAR(50) REFERENCES pacientes(paciente_id) ON DELETE CASCADE,
+            presion_arterial VARCHAR(20),
+            frecuencia_cardiaca INT,
+            temperatura DECIMAL(4,1),
+            saturacion_oxigeno INT,
+            nivel_triage INT NOT NULL CHECK (nivel_triage BETWEEN 1 AND 5),
+            motivo_consulta TEXT,
+            sede VARCHAR(50) NOT NULL,
+            fecha_registro TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS diagnosticos_fhir (
+            diag_id SERIAL PRIMARY KEY,
+            paciente_id VARCHAR(50) REFERENCES pacientes(paciente_id) ON DELETE CASCADE,
+            codigo_cie10 VARCHAR(10),
+            descripcion TEXT NOT NULL,
+            estado_clinico VARCHAR(20) DEFAULT 'active',
+            severidad VARCHAR(20),
+            sede VARCHAR(50) NOT NULL,
+            fecha_registro TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )`
+    ];
+
+    for (const sql of statements) {
+        try {
+            await mainPool.query(sql);
+        } catch (err) {
+            console.error(`[DB SCHEMA] ${SEDE_ACTUAL}:`, err.message);
+        }
+    }
+    console.log(`[DB SCHEMA] Esquema verificado en nodo ${SEDE_ACTUAL}`);
+}
+
+async function queryOptional(text, params) {
+    try {
+        return await pool.query(text, params);
+    } catch (err) {
+        console.warn(`[DB OPTIONAL] ${err.message}`);
+        return { rows: [], rowCount: 0 };
+    }
+}
+
 // ==================== KAFKA ====================
 
 const kafka = new Kafka({
@@ -207,7 +255,8 @@ const initKafka = async () => {
             // --- PARCHE DE COMPATIBILIDAD (Asegurar columna fecha_creacion) ---
             try {
                 await pool.query('ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS fecha_creacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP');
-                console.log(`[DB PATCH] Columna fecha_creacion verificada en ${SEDE_ACTUAL}`);
+                await pool.query('ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS firh JSONB');
+                console.log(`[DB PATCH] Columnas fecha_creacion y firh verificadas en ${SEDE_ACTUAL}`);
             } catch (err) {
                 // Silencioso si ya existe o hay error menor
             }
@@ -246,7 +295,10 @@ const initKafka = async () => {
                             await pool.query(`
                                 INSERT INTO pacientes (paciente_id, nombre, apellido, fecha_nacimiento, ciudad_registro_origen)
                                 VALUES ($1, $2, $3, $4, $5)
-                                ON CONFLICT (paciente_id) DO NOTHING
+                                ON CONFLICT (paciente_id) DO UPDATE SET
+                                    nombre = EXCLUDED.nombre,
+                                    apellido = EXCLUDED.apellido,
+                                    fecha_nacimiento = EXCLUDED.fecha_nacimiento
                             `, [paciente_id, nombre, apellido, fecha_nacimiento, evento.sede]);
                             console.log(`[SYNC PACIENTE] ${paciente_id} desde ${evento.sede}`);
                         }
@@ -258,12 +310,76 @@ const initKafka = async () => {
                             await pool.query('INSERT INTO pacientes (paciente_id, nombre, apellido, fecha_nacimiento, ciudad_registro_origen) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', 
                                 [d.paciente_id, 'Sincronizado', 'vía Triage', '1900-01-01', evento.sede]);
 
-                            await pool.query(`
-                                INSERT INTO triage_records 
-                                (paciente_id, presion_arterial, frecuencia_cardiaca, temperatura, saturacion_oxigeno, nivel_triage, motivo_consulta, sede)
-                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                            `, [d.paciente_id, d.presion_arterial, d.frecuencia_cardiaca, d.temperatura, d.saturacion_oxigeno, d.nivel_triage, d.motivo_consulta, d.sede]);
+                            const dupTriage = await pool.query(`
+                                SELECT 1 FROM triage_records
+                                WHERE paciente_id = $1 AND sede = $2 AND nivel_triage = $3
+                                  AND COALESCE(motivo_consulta, '') = COALESCE($4, '')
+                                LIMIT 1
+                            `, [d.paciente_id, d.sede, d.nivel_triage, d.motivo_consulta]);
+
+                            if (dupTriage.rowCount === 0) {
+                                await pool.query(`
+                                    INSERT INTO triage_records 
+                                    (paciente_id, presion_arterial, frecuencia_cardiaca, temperatura, saturacion_oxigeno, nivel_triage, motivo_consulta, sede)
+                                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                                `, [d.paciente_id, d.presion_arterial, d.frecuencia_cardiaca, d.temperatura, d.saturacion_oxigeno, d.nivel_triage, d.motivo_consulta, d.sede]);
+                            }
                             console.log(`[SYNC TRIAGE] Paciente ${d.paciente_id} desde ${evento.sede}`);
+                        }
+
+                        // --- REPLICACIÓN FIRH (historia clínica estructurada entre sedes) ---
+                        if (evento.tipo === 'FIRH_ACTUALIZADO') {
+                            const {
+                                paciente_id: pid,
+                                firh: firhRemoto,
+                                firh_ts_ms
+                            } = evento.data || {};
+
+                            if (!pid || firhRemoto === undefined || firhRemoto === null) {
+                                return;
+                            }
+
+                            const base = normalizarFirh(firhRemoto);
+                            const doc = { ...base };
+
+                            /** Evitar ecos retardados si dos sedes editan muy seguido (última escritura gana por marca de tiempo). */
+                            const existe = await pool.query(
+                                'SELECT firh FROM pacientes WHERE paciente_id = $1',
+                                [pid]
+                            );
+                            const firhLocal = normalizarFirh(existe.rows[0]?.firh);
+                            const meta = firhLocal.__wan_ts_ms;
+                            if (
+                                typeof firh_ts_ms === 'number' &&
+                                typeof meta === 'number' &&
+                                firh_ts_ms < meta
+                            ) {
+                                console.log(`[SYNC FIRH] Ignorando copia más antigua para ${pid}`);
+                                return;
+                            }
+
+                            if (typeof firh_ts_ms === 'number') {
+                                doc.__wan_ts_ms = firh_ts_ms;
+                            }
+                            doc.__wan_source_sede = evento.sede || doc.__wan_source_sede || 'desconocida';
+                            doc.__wan_event_ts_iso =
+                                typeof firh_ts_ms === 'number'
+                                    ? new Date(firh_ts_ms).toISOString()
+                                    : (doc.__wan_event_ts_iso || new Date().toISOString());
+
+                            const { nombre, apellido, fecha_nacimiento } = demografiaDesdeFirhDoc(doc);
+
+                            await pool.query(`
+                                INSERT INTO pacientes (paciente_id, nombre, apellido, fecha_nacimiento, ciudad_registro_origen, firh)
+                                VALUES ($1, $2, $3, $4::date, $5, $6::jsonb)
+                                ON CONFLICT (paciente_id) DO UPDATE SET
+                                    nombre = EXCLUDED.nombre,
+                                    apellido = EXCLUDED.apellido,
+                                    fecha_nacimiento = EXCLUDED.fecha_nacimiento,
+                                    firh = EXCLUDED.firh
+                            `, [pid, nombre, apellido, fecha_nacimiento, evento.sede, doc]);
+
+                            console.log(`[SYNC FIRH] Paciente ${pid} desde ${evento.sede}`);
                         }
 
                     } catch (e) {
@@ -292,6 +408,278 @@ const initKafka = async () => {
 };
 
 initKafka();
+
+/**
+ * Normaliza el JSONB firh: versiones antiguas guardaban un array [{ secciones... }].
+ */
+function normalizarFirh(firh) {
+    if (!firh) return {};
+    if (Array.isArray(firh)) {
+        return firh.length > 0 && typeof firh[0] === 'object' ? firh[0] : {};
+    }
+    if (typeof firh === 'string') {
+        try {
+            return normalizarFirh(JSON.parse(firh));
+        } catch {
+            return {};
+        }
+    }
+    return typeof firh === 'object' ? firh : {};
+}
+
+function limpiarMetadatosWan(firh) {
+    const base = normalizarFirh(firh);
+    const copia = { ...base };
+    delete copia.__wan_ts_ms;
+    delete copia.__wan_source_sede;
+    delete copia.__wan_event_ts_iso;
+    return copia;
+}
+
+function formatDateOnly(d) {
+    if (!d) return null;
+    if (d instanceof Date && !Number.isNaN(d.getTime())) {
+        return d.toISOString().split('T')[0];
+    }
+    return String(d).split('T')[0];
+}
+
+function formatDateTimeLocal(d) {
+    if (!d) return null;
+    const dt = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toISOString().slice(0, 16);
+}
+
+function nivelTriageAFhir(nivel) {
+    if (nivel === null || nivel === undefined) return null;
+    const n = parseInt(nivel, 10);
+    const mapa = { 1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V' };
+    return mapa[n] || String(nivel);
+}
+
+/**
+ * Arma precarga FIRH desde registro de paciente, triage, cuestionario e historia clínica.
+ */
+function construirFirhPreload(p, t, q, historia) {
+    const reg = limpiarMetadatosWan(p?.firh);
+    const iu = reg.identificacion_usuario || {};
+    const at = reg.atencion || {};
+    const ts = reg.tecnologias_salud || {};
+    const dx = reg.diagnosticos || {};
+    const eg = reg.egreso || {};
+
+    return {
+        identificacion_usuario: {
+            tipo_documento: iu.tipo_documento ?? null,
+            numero_documento: iu.numero_documento ?? p?.paciente_id ?? null,
+            pais_nacionalidad: iu.pais_nacionalidad ?? null,
+            nombre_completo: iu.nombre_completo ?? (p ? `${p.nombre} ${p.apellido}`.trim() : null),
+            fecha_nacimiento: iu.fecha_nacimiento ?? formatDateOnly(p?.fecha_nacimiento),
+            edad: iu.edad ?? null,
+            unidad_edad: iu.unidad_edad ?? null,
+            sexo: iu.sexo ?? null,
+            genero: iu.genero ?? null,
+            ocupacion: iu.ocupacion ?? null,
+            voluntad_anticipada: iu.voluntad_anticipada ?? null,
+            categoria_discapacidad: iu.categoria_discapacidad ?? null,
+            pais_residencia: iu.pais_residencia ?? null,
+            municipio_residencia: iu.municipio_residencia ?? null,
+            etnia: iu.etnia ?? null
+        },
+        atencion: {
+            entidad_salud: at.entidad_salud ?? null,
+            fecha_ingreso: at.fecha_ingreso ?? null,
+            modalidad_servicio: at.modalidad_servicio ?? null,
+            entorno_atencion: at.entorno_atencion ?? null,
+            via_ingreso: at.via_ingreso ?? null,
+            causa_atencion: at.causa_atencion ?? t?.motivo_consulta ?? null,
+            fecha_triaje: at.fecha_triaje ?? formatDateTimeLocal(t?.fecha_registro),
+            clasificacion_triaje: at.clasificacion_triaje ?? nivelTriageAFhir(t?.nivel_triage),
+            comunidad_etnica: at.comunidad_etnica ?? null
+        },
+        tecnologias_salud: {
+            descripcion_medicamento: ts.descripcion_medicamento ?? q?.medicamentos_actuales ?? null,
+            dosis: ts.dosis ?? null,
+            via_administracion: ts.via_administracion ?? null,
+            frecuencia: ts.frecuencia ?? null,
+            dias_tratamiento: ts.dias_tratamiento ?? null,
+            unidades_aplicadas: ts.unidades_aplicadas ?? null,
+            identificacion_personal_salud: ts.identificacion_personal_salud ?? historia?.medico_identification ?? null,
+            finalidad_tecnologia: ts.finalidad_tecnologia ?? null,
+            tipo_diagnostico_ingreso: ts.tipo_diagnostico_ingreso ?? null,
+            diagnostico_ingreso: ts.diagnostico_ingreso ?? historia?.diagnostico ?? null,
+            tipo_diagnostico_egreso: ts.tipo_diagnostico_egreso ?? null
+        },
+        diagnosticos: {
+            diagnostico_egreso: dx.diagnostico_egreso ?? historia?.diagnostico ?? null,
+            dx_rel_1: dx.dx_rel_1 ?? dx.diagnostico_rel_1 ?? null,
+            dx_rel_2: dx.dx_rel_2 ?? dx.diagnostico_rel_2 ?? null,
+            dx_rel_3: dx.dx_rel_3 ?? dx.diagnostico_rel_3 ?? null
+        },
+        egreso: {
+            fecha_egreso: eg.fecha_egreso ?? null,
+            condicion_salida: eg.condicion_salida ?? null,
+            diagnostico_muerte: eg.diagnostico_muerte ?? null,
+            codigo_prestador: eg.codigo_prestador ?? null,
+            tipo_incapacidad: eg.tipo_incapacidad ?? null,
+            dias_incapacidad: eg.dias_incapacidad ?? null,
+            dias_licencia_maternidad: eg.dias_licencia_maternidad ?? null,
+            alergias: eg.alergias ?? q?.detalle_alergias ?? null,
+            antecedentes_familiares: eg.antecedentes_familiares ?? q?.antecedentes_patologicos ?? null,
+            riesgos_ocupacionales: eg.riesgos_ocupacionales ?? null,
+            responsable_egreso: eg.responsable_egreso ?? null,
+            zona_residencia: eg.zona_residencia ?? null,
+            direccion_residencia: eg.direccion_residencia ?? null,
+            telefono: eg.telefono ?? null,
+            correo_electronico: eg.correo_electronico ?? null,
+            nombre_responsable: eg.nombre_responsable ?? q?.contacto_emergencia_nombre ?? null,
+            parentesco_responsable: eg.parentesco_responsable ?? null,
+            telefono_responsable: eg.telefono_responsable ?? q?.contacto_emergencia_telefono ?? null
+        }
+    };
+}
+
+/** Datos mínimos para crear fila paciente si la otra sede recibe FIRH antes del alta demográfica. */
+function demografiaDesdeFirhDoc(firhDoc) {
+    const iu = firhDoc?.identificacion_usuario || {};
+    let nombre = 'Paciente';
+    let apellido = 'Sincronizado';
+    const nc = (iu.nombre_completo || '').trim();
+    if (nc) {
+        const partes = nc.split(/\s+/);
+        nombre = partes[0];
+        apellido = partes.length > 1 ? partes.slice(1).join(' ') : '-';
+    }
+    let fn = iu.fecha_nacimiento;
+    if (!fn || fn === '') fn = '1900-01-01';
+    else if (typeof fn === 'object' && fn instanceof Date && !Number.isNaN(fn.getTime())) {
+        fn = fn.toISOString().split('T')[0];
+    } else if (typeof fn === 'string' && fn.includes('T')) {
+        fn = fn.split('T')[0];
+    }
+    return { nombre, apellido, fecha_nacimiento: fn };
+}
+
+/**
+ * Replica el documento FIRH a otras sedes vía Kafka (mismo paciente_id, una sola fila; solo cambia firh JSONB).
+ */
+async function publicarFIRHWAN(paciente_id, firhDocumento, opciones = {}) {
+    const doc =
+        firhDocumento && typeof firhDocumento === 'object' ? { ...firhDocumento } : {};
+    const forzar = opciones.forzar === true;
+    const firh_ts_ms = forzar
+        ? Date.now()
+        : (typeof doc.__wan_ts_ms === 'number' ? doc.__wan_ts_ms : Date.now());
+    doc.__wan_ts_ms = firh_ts_ms;
+    doc.__wan_source_sede = SEDE_ACTUAL;
+    doc.__wan_event_ts_iso = new Date(firh_ts_ms).toISOString();
+
+    const evento = {
+        event_id: `FIRH-${paciente_id}-${firh_ts_ms}-${Math.random().toString(36).substring(2, 10)}`,
+        tipo: 'FIRH_ACTUALIZADO',
+        sede: SEDE_ACTUAL,
+        timestamp: new Date().toISOString(),
+        data: {
+            paciente_id,
+            firh: doc,
+            firh_ts_ms
+        }
+    };
+    try {
+        await producer.send({
+            topic: 'eventos-clinicos',
+            messages: [{
+                key: String(paciente_id),
+                value: JSON.stringify(evento)
+            }]
+        });
+        console.log(`[WAN FIRH] Documento FIRH replicado para ${paciente_id} (${SEDE_ACTUAL})`);
+    } catch (e) {
+        console.warn('[FALLO WAN FIRH] Guardando para reenvío cuando vuelva el bus:', e.message);
+        guardarPendiente(evento);
+    }
+}
+
+async function publicarPacienteWAN(p) {
+    const evento = {
+        event_id: `PAC-${p.paciente_id}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+        tipo: 'PACIENTE_REGISTRO_COMPLETO',
+        sede: SEDE_ACTUAL,
+        timestamp: new Date().toISOString(),
+        data: {
+            paciente_id: p.paciente_id,
+            nombre: p.nombre,
+            apellido: p.apellido,
+            fecha_nacimiento: formatDateOnly(p.fecha_nacimiento)
+        }
+    };
+    try {
+        await producer.send({
+            topic: 'eventos-clinicos',
+            messages: [{ key: String(p.paciente_id), value: JSON.stringify(evento) }]
+        });
+    } catch (e) {
+        guardarPendiente(evento);
+        throw e;
+    }
+}
+
+async function publicarTriageWAN(triageRow) {
+    if (!triageRow) return;
+    const evento = {
+        event_id: `TRIAGE-RESYNC-${triageRow.paciente_id}-${Date.now()}`,
+        tipo: 'TRIAGE_REGISTRO',
+        sede: SEDE_ACTUAL,
+        timestamp: new Date().toISOString(),
+        data: triageRow
+    };
+    try {
+        await producer.send({
+            topic: 'eventos-clinicos',
+            messages: [{ key: String(triageRow.paciente_id), value: JSON.stringify(evento) }]
+        });
+    } catch (e) {
+        guardarPendiente(evento);
+        throw e;
+    }
+}
+
+/**
+ * Republica un paciente completo (demografía + FIRH + último triage) a la WAN.
+ */
+async function replicarPacienteAWAN(pacienteId) {
+    const pacienteRes = await mainPool.query(
+        'SELECT * FROM pacientes WHERE paciente_id = $1',
+        [pacienteId]
+    );
+    const p = pacienteRes.rows[0];
+    if (!p) {
+        return { ok: false, paciente_id: pacienteId, error: 'no_encontrado' };
+    }
+
+    const resultado = { ok: true, paciente_id: pacienteId, enviado: [] };
+
+    await publicarPacienteWAN(p);
+    resultado.enviado.push('PACIENTE_REGISTRO_COMPLETO');
+
+    const firhLimpio = limpiarMetadatosWan(p.firh);
+    if (Object.keys(firhLimpio).length > 0) {
+        await publicarFIRHWAN(pacienteId, firhLimpio, { forzar: true });
+        resultado.enviado.push('FIRH_ACTUALIZADO');
+    }
+
+    const triageRes = await queryOptional(
+        `SELECT * FROM triage_records WHERE paciente_id = $1 ORDER BY fecha_registro DESC LIMIT 1`,
+        [pacienteId]
+    );
+    if (triageRes.rows[0]) {
+        await publicarTriageWAN(triageRes.rows[0]);
+        resultado.enviado.push('TRIAGE_REGISTRO');
+    }
+
+    return resultado;
+}
 
 function validarCampos(obligatorios, datos) {
     const errores = [];
@@ -657,6 +1045,8 @@ app.post('/api/pacientes', verificarTokenFHIR, async (req, res) => {
             }
         };
 
+        firh.__wan_ts_ms = Date.now();
+
         await pool.query(`UPDATE pacientes SET firh = $1 WHERE paciente_id = $2`, [firh, paciente_id]);
 
         const evento = {
@@ -677,6 +1067,8 @@ app.post('/api/pacientes', verificarTokenFHIR, async (req, res) => {
             console.warn(`[FALLO WAN] Evento pendiente de sincronización`);
             guardarPendiente(evento);
         }
+
+        await publicarFIRHWAN(paciente_id, firh);
 
         res.status(201).json({ status: 'Éxito', mensaje: 'Paciente registrado correctamente', sede: SEDE_ACTUAL });
 
@@ -881,9 +1273,46 @@ app.post('/api/firh/cargar', verificarTokenFHIR, async (req, res) => {
 
         if (tabla === 'completo') {
             const { paciente_id, identificacion_usuario, atencion, tecnologias_salud, diagnosticos, egreso } = datos;
-            await pool.query(`UPDATE pacientes SET firh = $1::jsonb WHERE paciente_id = $2`,
-                [{ identificacion_usuario, atencion, tecnologias_salud, diagnosticos, egreso }, paciente_id]);
-            return res.json({ ok: true, mensaje: 'FIRH completo guardado' });
+            if (!paciente_id) {
+                return res.status(400).json({ ok: false, detail: 'paciente_id es obligatorio para guardar FIRH' });
+            }
+            const existe = await mainPool.query(
+                'SELECT paciente_id FROM pacientes WHERE paciente_id = $1',
+                [paciente_id]
+            );
+            if (existe.rowCount === 0) {
+                return res.status(404).json({
+                    ok: false,
+                    detail: `Paciente "${paciente_id}" no existe en esta sede. Use el mismo ID con el que se registró.`
+                });
+            }
+
+            const firhDocumento = {
+                identificacion_usuario,
+                atencion,
+                tecnologias_salud,
+                diagnosticos,
+                egreso
+            };
+            firhDocumento.__wan_ts_ms = Date.now();
+            const actualizado = await mainPool.query(
+                `UPDATE pacientes SET firh = $1::jsonb WHERE paciente_id = $2`,
+                [firhDocumento, paciente_id]
+            );
+            if (actualizado.rowCount === 0) {
+                return res.status(500).json({ ok: false, detail: 'No se pudo guardar el FIRH en la base de datos' });
+            }
+
+            await publicarFIRHWAN(paciente_id, firhDocumento);
+
+            const firhParaCliente = { ...firhDocumento };
+            delete firhParaCliente.__wan_ts_ms;
+
+            return res.json({
+                ok: true,
+                mensaje: 'FIRH completo guardado y replicado a la WAN',
+                firh: firhParaCliente
+            });
         }
 
         return res.json({ ok: true, tabla });
@@ -897,42 +1326,50 @@ app.post('/api/firh/cargar', verificarTokenFHIR, async (req, res) => {
 // Obtener datos completos de un paciente (PROTEGIDO)
 app.use('/static', express.static('public'));
 app.get('/api/paciente/:id', verificarTokenFHIR, async (req, res) => {
-    const pacienteId = req.params.id;
+    const pacienteId = decodeURIComponent(req.params.id).trim();
 
     try {
-        const pacienteRes = await pool.query(`SELECT *, firh FROM pacientes WHERE paciente_id = $1`, [pacienteId]);
-        const historiaRes = await pool.query(`SELECT * FROM historias_clinicas WHERE paciente_id = $1 ORDER BY version DESC LIMIT 1`, [pacienteId]);
-        const cuestionarioRes = await pool.query(`SELECT * FROM cuestionario_registro WHERE paciente_id = $1 ORDER BY version_clinica DESC LIMIT 1`, [pacienteId]);
-        const triageRes = await pool.query(`SELECT * FROM triage_records WHERE paciente_id = $1 ORDER BY fecha_registro DESC`, [pacienteId]);
+        const pacienteRes = await pool.query(
+            `SELECT * FROM pacientes WHERE paciente_id = $1`,
+            [pacienteId]
+        );
+
+        if (!pacienteRes.rows[0]) {
+            return res.status(404).json({ detail: `Paciente "${pacienteId}" no encontrado` });
+        }
+
+        const historiaRes = await queryOptional(
+            `SELECT * FROM historias_clinicas WHERE paciente_id = $1 ORDER BY version DESC LIMIT 1`,
+            [pacienteId]
+        );
+        const cuestionarioRes = await queryOptional(
+            `SELECT * FROM cuestionario_registro WHERE paciente_id = $1 ORDER BY version_clinica DESC LIMIT 1`,
+            [pacienteId]
+        );
+        const triageRes = await queryOptional(
+            `SELECT * FROM triage_records WHERE paciente_id = $1 ORDER BY fecha_registro DESC`,
+            [pacienteId]
+        );
 
         const p = pacienteRes.rows[0];
         const t = triageRes.rows[0];
         const q = cuestionarioRes.rows[0];
-        
-        // Bloque dinámico: SOLO extraemos lo que YA existe en la base de datos. 
-        // Si no existe, se envía como null para que el formulario aparezca vacío.
-        const firh_preload = {
-            identificacion_usuario: {
-                tipo_documento: null, 
-                numero_documento: p?.paciente_id || null,
-                nombre_completo: p ? `${p.nombre} ${p.apellido}` : null,
-                fecha_nacimiento: p?.fecha_nacimiento ? p.fecha_nacimiento.toISOString().split('T')[0] : null,
-                pais_nacionalidad: null
-            },
-            atencion: {
-                entidad_salud: null,
-                fecha_ingreso: null,
-                fecha_triaje: t?.fecha_registro ? t.fecha_registro.toISOString().slice(0, 16) : null,
-                clasificacion_triaje: t?.nivel_triage ? t.nivel_triage.toString() : null,
-                causa_atencion: t?.motivo_consulta || null
-            },
-            egreso: {
-                nombre_responsable: q?.contacto_emergencia_nombre || null,
-                telefono_responsable: q?.contacto_emergencia_telefono || null
-            }
-        };
+        const historia = historiaRes.rows[0] || null;
 
-        const firh_guardado = p?.firh || {};
+        const firh_preload = construirFirhPreload(p, t, q, historia);
+
+        const firh_guardado = normalizarFirh(p?.firh);
+        delete firh_guardado.__wan_ts_ms;
+        delete firh_guardado.__wan_source_sede;
+        delete firh_guardado.__wan_event_ts_iso;
+
+        // Corregir en BD registros guardados con el bug del array [{ ... }]
+        if (p && Array.isArray(p.firh) && pacienteId) {
+            pool.query(
+                'UPDATE pacientes SET firh = $1::jsonb WHERE paciente_id = $2',
+                [firh_guardado, pacienteId]
+            ).catch(() => {});
+        }
 
         return res.json({
             paciente: p || null,
@@ -946,6 +1383,116 @@ app.get('/api/paciente/:id', verificarTokenFHIR, async (req, res) => {
     } catch (err) {
         console.error(err);
         return res.status(500).json({ detail: err.message });
+    }
+});
+
+// Diagnóstico rápido de réplica WAN entre sedes para un paciente
+app.get('/api/debug/replica/:id', verificarTokenFHIR, async (req, res) => {
+    const pacienteId = decodeURIComponent(req.params.id).trim();
+    try {
+        const result = await pool.query(
+            `SELECT paciente_id, ciudad_registro_origen, firh, fecha_creacion
+             FROM pacientes
+             WHERE paciente_id = $1`,
+            [pacienteId]
+        );
+
+        if (!result.rows[0]) {
+            return res.status(404).json({ ok: false, detail: `Paciente "${pacienteId}" no encontrado en nodo ${SEDE_ACTUAL}` });
+        }
+
+        const row = result.rows[0];
+        const firhRaw = normalizarFirh(row.firh);
+        const firhVisible = limpiarMetadatosWan(firhRaw);
+        const metaTsMs = typeof firhRaw.__wan_ts_ms === 'number' ? firhRaw.__wan_ts_ms : null;
+        const sectionsWithData = Object.entries(firhVisible)
+            .filter(([, v]) => v && typeof v === 'object' && Object.keys(v).length > 0)
+            .map(([k]) => k);
+
+        return res.json({
+            ok: true,
+            paciente_id: row.paciente_id,
+            nodo_actual: SEDE_ACTUAL,
+            origen_registro: row.ciudad_registro_origen,
+            fecha_creacion: row.fecha_creacion || null,
+            replica: {
+                firh_presente: Object.keys(firhVisible).length > 0,
+                secciones_con_datos: sectionsWithData,
+                last_write: {
+                    source_sede: firhRaw.__wan_source_sede || 'desconocida',
+                    ts_ms: metaTsMs,
+                    iso: firhRaw.__wan_event_ts_iso || (metaTsMs ? new Date(metaTsMs).toISOString() : null)
+                }
+            }
+        });
+    } catch (err) {
+        return res.status(500).json({ ok: false, detail: err.message });
+    }
+});
+
+// Resumen local de pacientes (comparar conteos entre sedes)
+app.get('/api/sync/resumen', verificarTokenFHIR, async (req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT paciente_id, ciudad_registro_origen, fecha_creacion,
+                   (firh IS NOT NULL AND firh::text <> 'null' AND firh::text <> '{}') AS tiene_firh
+            FROM pacientes
+            ORDER BY paciente_id
+        `);
+        return res.json({
+            ok: true,
+            nodo: SEDE_ACTUAL,
+            total: r.rowCount,
+            pacientes: r.rows
+        });
+    } catch (err) {
+        return res.status(500).json({ ok: false, detail: err.message });
+    }
+});
+
+// Republicar TODOS los pacientes de esta sede a Kafka (para recuperar desfases históricos)
+app.post('/api/sync/replicar-todo', verificarTokenFHIR, async (req, res) => {
+    try {
+        const lista = await mainPool.query('SELECT paciente_id FROM pacientes ORDER BY paciente_id');
+        const resultados = [];
+
+        for (const row of lista.rows) {
+            try {
+                const r = await replicarPacienteAWAN(row.paciente_id);
+                resultados.push(r);
+            } catch (e) {
+                resultados.push({ ok: false, paciente_id: row.paciente_id, error: e.message });
+            }
+            await new Promise(resolve => setTimeout(resolve, 120));
+        }
+
+        const okCount = resultados.filter(x => x.ok).length;
+        return res.json({
+            ok: true,
+            sede_origen: SEDE_ACTUAL,
+            mensaje: `Republicados ${okCount}/${resultados.length} pacientes hacia la WAN`,
+            resultados
+        });
+    } catch (err) {
+        return res.status(500).json({ ok: false, detail: err.message });
+    }
+});
+
+// Republicar un solo paciente
+app.post('/api/sync/replicar-paciente/:id', verificarTokenFHIR, async (req, res) => {
+    const pacienteId = decodeURIComponent(req.params.id).trim();
+    try {
+        const r = await replicarPacienteAWAN(pacienteId);
+        if (!r.ok) {
+            return res.status(404).json(r);
+        }
+        return res.json({
+            ...r,
+            sede_origen: SEDE_ACTUAL,
+            mensaje: 'Paciente republicado a la WAN'
+        });
+    } catch (err) {
+        return res.status(500).json({ ok: false, detail: err.message });
     }
 });
 
@@ -1018,6 +1565,14 @@ clinica_node_status{sede="${SEDE_ACTUAL}"} 1
 // ==================== ARRANQUE DEL SERVIDOR ====================
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor de la clínica corriendo en el puerto ${PORT} [Nodo ${SEDE_ACTUAL}]`);
-});
+
+ensureDbSchema()
+    .then(() => {
+        app.listen(PORT, () => {
+            console.log(`🚀 Servidor de la clínica corriendo en el puerto ${PORT} [Nodo ${SEDE_ACTUAL}]`);
+        });
+    })
+    .catch((err) => {
+        console.error('[DB SCHEMA] Fallo crítico al iniciar:', err.message);
+        process.exit(1);
+    });

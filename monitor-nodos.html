@@ -327,6 +327,10 @@
                     </div>
                 </div>
             </div>
+                </h2>
+                </p>
+                <div id="sync-actions" style="display:flex;flex-wrap:wrap;gap:0.5rem;"></div>
+            </div>
 
             <div class="refresh-notice">
                 <i class="ph ph-arrows-clockwise"></i>
@@ -393,12 +397,44 @@
             pingEl.textContent = "Inalcanzable";
         }
 
+        function crearBotonesSync() {
+            const cont = document.getElementById('sync-actions');
+            cont.innerHTML = sedes.map(s => `
+                <!--<button type="button" class="btn btn-primary" data-puerto="${s.puerto}" style="font-size:0.85rem;">
+                    Replicar todo desde ${s.nombre} (${s.puerto})
+                </button>-->
+            `).join('');
+
+            cont.querySelectorAll('button').forEach(btn => {
+                btn.addEventListener('click', () => replicarDesdeSede(btn.dataset.puerto, btn));
+            });
+        }
+
+        async function replicarDesdeSede(puerto, btn) {
+            const out = document.getElementById('sync-result');
+            out.style.display = 'block';
+            out.textContent = `Republicando pacientes desde puerto ${puerto}...`;
+            btn.disabled = true;
+
+            try {
+                const resp = await AuthHelper.authenticatedFetch(
+                    `http://${HOST}:${puerto}/api/sync/replicar-todo`,
+                    { method: 'POST' },
+                    puerto
+                );
+                const data = await resp.json();
+                out.textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                out.textContent = `Error: ${e.message}`;
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
         window.addEventListener('load', () => {
-
+            crearBotonesSync();
             actualizarEstado();
-
             setInterval(actualizarEstado, 5000);
-
         });
     </script>
 

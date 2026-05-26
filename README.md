@@ -60,6 +60,10 @@ graph TD
 El sistema emula un servidor **Hapi FHIR R4**, exponiendo endpoints estandarizados:
 - `GET /api/v1/fhir/metadata`: Retorna el `CapabilityStatement` del servidor.
 - `GET /api/v1/fhir/patients`: Consulta de recursos Patient FHIR.
+- `GET /api/debug/replica/:id`: Diagnóstico de replicación WAN por paciente (sede origen, última escritura y secciones FIRH presentes).
+- `GET /api/sync/resumen`: Lista pacientes del nodo actual (para comparar sedes).
+- `POST /api/sync/replicar-todo`: Republica todos los pacientes locales a Kafka (recuperar desfases si Kafka no estaba activo al registrar).
+- `POST /api/sync/replicar-paciente/:id`: Republica un paciente puntual.
 
 ### Seguridad (SMART on FHIR):
 - Implementación de **OAuth2 con JWT**.
