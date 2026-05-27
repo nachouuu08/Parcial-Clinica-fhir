@@ -95,6 +95,15 @@ app.post('/api/v1/auth/token', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
+// Migración para agregar columna registrado_por si no existe
+async function migrarBD() {
+    try {
+        await pool.query('ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS registrado_por VARCHAR(50)');
+        await globalPool.query('ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS registrado_por VARCHAR(50)');
+    } catch (e) {}
+}
+migrarBD();
+
 app.get('/api/firh/campos', (req, res) => {
     res.json({
         identificacion_usuario: { campos: {
