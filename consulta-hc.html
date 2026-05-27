@@ -366,15 +366,15 @@
                     <i class="ph ph-sign-out"></i>
                     Cerrar Sesión
                 </button>
-                <a href="/triage" class="btn btn-primary">
+                <a href="http://localhost:3008/triage" class="btn btn-primary">
                     <i class="ph ph-heartbeat"></i>
                     Triage
                 </a>
-                <a href="/reportes" class="btn btn-primary">
+                <a href="http://localhost:3005/reportes" class="btn btn-primary">
                     <i class="ph ph-chart-pie"></i>
                     Reportes
                 </a>
-                <a href="/monitor-nodos" class="btn btn-primary">
+                <a href="http://localhost:3005/monitor-nodos" class="btn btn-primary">
                     <i class="ph ph-activity"></i>
                     Nodos
                 </a>
@@ -576,14 +576,14 @@
                         <td>${doctor}</td>
                         <td>
                             <div style="display: flex; gap: 5px;">
-                                <a href="/paciente/${id}" class="btn-view">
-                                    <i class="ph ph-eye"></i>
-                                    Detalle
-                                </a>
-                                <a href="/triage?id=${id}" class="btn-view" style="background: #ed8936;">
-                                    <i class="ph ph-heartbeat"></i>
-                                    Triage
-                                </a>
+<a href="http://localhost:3007/paciente/${id}" class="btn-view">
+                                      <i class="ph ph-eye"></i>
+                                      Detalle
+                                  </a>
+                                  <a href="http://localhost:3008/triage?id=${id}" class="btn-view" style="background: #ed8936;">
+                                     <i class="ph ph-heartbeat"></i>
+                                     Triage
+                                 </a>
                             </div>
                         </td>
                     </tr>

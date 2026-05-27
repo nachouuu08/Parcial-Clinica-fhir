@@ -13,6 +13,7 @@ app.use('/static', express.static('static'));
 
 const JWT_SECRET = process.env.JWT_SECRET || 'clave_secreta_smart_on_fhir_2026';
 const PENDING_FILE = path.join(process.cwd(), 'pendientes_gateway.json');
+const SYNC_QUEUE_FILE = path.join(process.cwd(), 'sync_queue_gateway.json');
 
 const globalPool = new Pool({
     user: 'admin_clinica',
@@ -22,6 +23,7 @@ const globalPool = new Pool({
     host: process.env.GLOBAL_DB_HOST || 'db_global'
 });
 
+const SEDE_HOSTS = { Sincelejo: 'app_sincelejo', Bogota: 'app_bogota', Medellin: 'app_medellin' };
 const SEDE_PORTS = { Sincelejo: 3001, Bogota: 3002, Medellin: 3003 };
 const HOST_IP = process.env.HOST_IP || '192.168.101.14';
 
@@ -49,6 +51,47 @@ function guardarPendiente(evento) {
     pendientes.push({...evento, timestamp: Date.now()});
     fs.writeFileSync(PENDING_FILE, JSON.stringify(pendientes, null, 2));
 }
+
+function guardarEnCola(sedeDestino, datos, tipo) {
+    let cola = [];
+    if (fs.existsSync(SYNC_QUEUE_FILE)) {
+        try { cola = JSON.parse(fs.readFileSync(SYNC_QUEUE_FILE, 'utf8')); } catch {}
+    }
+    cola.push({ sede: sedeDestino, tipo, datos, timestamp: Date.now(), intentos: 0 });
+    fs.writeFileSync(SYNC_QUEUE_FILE, JSON.stringify(cola, null, 2));
+}
+
+// Procesar cola de sincronización cada 5 segundos
+async function procesarCola() {
+    if (!fs.existsSync(SYNC_QUEUE_FILE)) return;
+    let cola = [];
+    try { cola = JSON.parse(fs.readFileSync(SYNC_QUEUE_FILE, 'utf8')); } catch { return; }
+    const pendientes = [];
+    for (const item of cola) {
+        const host = SEDE_HOSTS[item.sede];
+        if (!host) continue;
+        try {
+            const endpoint = item.tipo === 'triage' ? '/api/triage' : '/api/registro/paciente';
+            const response = await fetch(`http://${host}:3000${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(item.datos)
+            });
+            if (response.ok) {
+                console.log(`[GATEWAY] Sincronizado ${item.tipo} a ${item.sede}`);
+            } else {
+                throw new Error(`HTTP ${response.status}`);
+            }
+        } catch (err) {
+            item.intentos = (item.intentos || 0) + 1;
+            if (item.intentos < 30) pendientes.push(item);
+            else console.error(`[GATEWAY] Falló sincronización a ${item.sede} después de ${item.intentos} intentos`);
+        }
+    }
+    fs.writeFileSync(SYNC_QUEUE_FILE, JSON.stringify(pendientes, null, 2));
+}
+
+setInterval(procesarCola, 5000);
 
 let producer = null;
 try {
@@ -192,11 +235,38 @@ app.get('/api/paciente/:id', async (req, res) => {
         if (!result.rows[0]) {
             return res.status(404).json({ detail: `Paciente "${pacienteId}" no encontrado` });
         }
-        const firhData = result.rows[0].firh || {};
+        const row = result.rows[0];
+        const firhData = row.firh || {};
+        
+        // Obtener triage records
+        const triageResult = await globalPool.query("SELECT * FROM triage_records WHERE paciente_id = $1 ORDER BY fecha_registro DESC LIMIT 50", [pacienteId]);
+        const triage = triageResult.rows.map(r => ({
+            nivel_triage: r.nivel_triage,
+            motivo_consulta: r.motivo_consulta,
+            presion_arterial: r.presion_arterial,
+            frecuencia_cardiaca: r.frecuencia_cardiaca,
+            temperatura: r.temperatura,
+            saturacion_oxigeno: r.saturacion_oxigeno,
+            sede: r.sede,
+            fecha_registro: r.fecha_registro
+        }));
+        
+        const historias = firhData ? [{ 
+            version: 1, 
+            sede_actualizacion: row.ciudad_registro_origen, 
+            ...firhData 
+        }] : [];
+        
         res.json({
-            paciente: result.rows[0],
-            triage: [],
-            historias: firhData ? [{ version: 1, sede_actualizacion: result.rows[0].ciudad_registro_origen, ...firhData }] : [],
+            paciente: {
+                paciente_id: row.paciente_id,
+                nombre: row.nombre,
+                apellido: row.apellido,
+                fecha_nacimiento: row.fecha_nacimiento,
+                tipo_documento: row.tipo_documento || 'CC'
+            },
+            triage,
+            historias,
             cuestionario: null,
             firh_guardado: firhData
         });
@@ -204,6 +274,38 @@ app.get('/api/paciente/:id', async (req, res) => {
         res.status(500).json({ detail: err.message });
     }
 });
+
+app.post('/api/triage', async (req, res) => {
+    const { paciente_id, presion_arterial, frecuencia_cardiaca, temperatura, saturacion_oxigeno, nivel_triage, motivo_consulta } = req.body;
+    if (!paciente_id) return res.status(400).json({ ok: false, detail: 'paciente_id es obligatorio' });
+    if (!nivel_triage) return res.status(400).json({ ok: false, detail: 'nivel_triage es obligatorio' });
+    try {
+        await globalPool.query(
+            `INSERT INTO triage_records (paciente_id, presion_arterial, frecuencia_cardiaca, temperatura, saturacion_oxigeno, nivel_triage, motivo_consulta, sede) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [paciente_id, presion_arterial, parseInt(frecuencia_cardiaca) || null, parseFloat(temperatura) || null, parseInt(saturacion_oxigeno) || null, parseInt(nivel_triage), motivo_consulta, 'GATEWAY']
+        );
+        // Replicar a TODAS las sedes, encolar si falla
+        for (const sede of Object.keys(SEDE_HOSTS)) {
+            try {
+                const response = await fetch(`http://${SEDE_HOSTS[sede]}:3000/api/triage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...req.body, esReplicado: true })
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            } catch (e) {
+                guardarEnCola(sede, { ...req.body, esReplicado: true }, 'triage');
+            }
+        }
+        res.json({ ok: true, mensaje: 'Triage guardado en BD global y todas las sedes' });
+    } catch (err) {
+        guardarPendiente({ tipo: 'TRIAGE_GUARDADO', ...req.body });
+        res.status(202).json({ ok: true, mensaje: 'Guardado offline para sincronizar después', offline: true });
+    }
+});
+
+app.get('/triage', (req, res) => res.sendFile(path.join(__dirname, 'triage.html')));
 
 const PORT = process.env.PORT || 3000;
 
@@ -313,7 +415,9 @@ app.get('/api/v1/fhir/patients', async (req, res) => {
 
 app.get('/login-medico', (req, res) => res.sendFile(path.join(__dirname, 'login-medico.html')));
 app.get('/registro-paciente', (req, res) => res.sendFile(path.join(__dirname, 'registro-paciente.html')));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'login-medico.html')));
+app.get('/triage', (req, res) => res.sendFile(path.join(__dirname, 'triage.html')));
+app.get('/paciente/:id', (req, res) => res.sendFile(path.join(__dirname, 'firh.html')));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'registro-paciente.html')));
 
 const server = app.listen(PORT, () => {
     console.log(`🚀 Gateway de registro escuchando en puerto ${PORT}`);

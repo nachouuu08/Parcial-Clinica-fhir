@@ -251,9 +251,9 @@
             }
         });
 
-        async function cargarHistorialTriage(pacienteId) {
-            try {
-                const response = await AuthHelper.authenticatedFetch(`/api/triage/historias?paciente_id=${encodeURIComponent(pacienteId)}`, {
+async function cargarHistorialTriage(pacienteId) {
+    try {
+        const response = await AuthHelper.authenticatedFetch(`/api/triage/historias?paciente_id=${encodeURIComponent(pacienteId)}&limit=50&offset=0`, {
                     method: 'GET',
                     headers: { 'Content-Type': 'application/json' }
                 });
@@ -326,8 +326,8 @@
                  motivo_consulta: document.getElementById('motivo').value
              };
 
-             try {
-                 const response = await AuthHelper.authenticatedFetch('/api/triage', {
+try {
+                  const response = await AuthHelper.authenticatedFetch('/api/triage', {
                      method: 'POST',
                      headers: { 'Content-Type': 'application/json' },
                      body: JSON.stringify(payload)

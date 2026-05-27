@@ -51,12 +51,71 @@ services:
       - ./registro.js:/usr/src/app/registro.js
       - ./registro-paciente.html:/usr/src/app/registro-paciente.html
       - ./firh.html:/usr/src/app/firh.html
+      - ./triage.html:/usr/src/app/triage.html
       - ./static:/usr/src/app/static
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       db_global: { condition: service_healthy }
       kafka: { condition: service_healthy }
+
+  gateway_central:
+    build: .
+    container_name: gateway_central
+    command: ["node", "gateway.js"]
+    ports: [ "3000:3000" ]
+    networks: [ clinica_net ]
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - GLOBAL_DB_HOST=db_global
+      - HOST_IP=host.docker.internal
+    volumes:
+      - ./gateway.js:/usr/src/app/gateway.js
+      - ./registro-paciente.html:/usr/src/app/registro-paciente.html
+      - ./firh.html:/usr/src/app/firh.html
+      - ./triage.html:/usr/src/app/triage.html
+      - ./static:/usr/src/app/static
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db_global: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  gateway_firh:
+    build: .
+    container_name: gateway_firh
+    command: ["node", "firh_server.js"]
+    ports: [ "3007:3000" ]
+    networks: [ clinica_net ]
+    environment:
+      - GLOBAL_DB_HOST=db_global
+      - PORT=3000
+    volumes:
+      - ./firh_server.js:/usr/src/app/firh_server.js
+      - ./registro-paciente.html:/usr/src/app/registro-paciente.html
+      - ./firh.html:/usr/src/app/firh.html
+      - ./triage.html:/usr/src/app/triage.html
+      - ./static:/usr/src/app/static
+    depends_on:
+      db_global: { condition: service_healthy }
+
+  gateway_triage:
+    build: .
+    container_name: gateway_triage
+    command: ["node", "triage_service.js"]
+    ports: [ "3008:3000" ]
+    networks: [ clinica_net ]
+    environment:
+      - GLOBAL_DB_HOST=db_global
+      - PORT=3000
+    volumes:
+      - ./triage_service.js:/usr/src/app/triage_service.js
+      - ./registro-paciente.html:/usr/src/app/registro-paciente.html
+      - ./firh.html:/usr/src/app/firh.html
+      - ./triage.html:/usr/src/app/triage.html
+      - ./static:/usr/src/app/static
+    depends_on:
+      db_global: { condition: service_healthy }
 
   # --- SINCELEJO NODE ---
   db_sincelejo:

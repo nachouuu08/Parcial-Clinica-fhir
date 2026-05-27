@@ -115,21 +115,27 @@
       window.location.href = `http://localhost:${destino}/consulta-hc`;
     }
 
-    function setStatus(message, type = '') {
-      statusBar.textContent = message;
-      statusBar.className = 'status-bar ' + (type || '');
-    }
+function setStatus(message, type = '') {
+       if (statusBar) {
+         statusBar.textContent = message;
+         statusBar.className = 'status-bar ' + (type || '');
+       }
+     }
 
     function showHistoryList() {
-      document.getElementById('form-view').style.display = 'none';
-      document.getElementById('history-view').style.display = 'block';
+      const formView = document.getElementById('form-view');
+      const historyView = document.getElementById('history-view');
+      const emptyHistoria = document.getElementById('empty-historia');
+      const historiaList = document.getElementById('historia-list');
+      
+      if (formView) formView.style.display = 'none';
+      if (historyView) historyView.style.display = 'block';
       if (!historiasCache || historiasCache.length === 0) {
-        document.getElementById('empty-historia').style.display = 'block';
+        if (emptyHistoria) emptyHistoria.style.display = 'block';
         return;
       }
-      document.getElementById('empty-historia').style.display = 'none';
-      const historiaList = document.getElementById('historia-list');
-      historiaList.innerHTML = historiasCache.map((h, idx) => `
+      if (emptyHistoria) emptyHistoria.style.display = 'none';
+      if (historiaList) historiaList.innerHTML = historiasCache.map((h, idx) => `
         <div class="history-list-item" onclick="verHistoria(${idx})" data-index="${idx}">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
@@ -142,41 +148,51 @@
     }
 
 function verHistoria(idx) {
-        const historia = historiasCache[idx];
-        if (!historia) return;
-        aplicarDatosAlFormulario(schemaCache, { firh_guardado: historia });
-        showForm();
-      }
+      const historia = historiasCache[idx];
+      if (!historia) return;
+      aplicarDatosAlFormulario(schemaCache, { firh_guardado: historia });
+      showForm();
+    }
 
-     function showForm() {
-        document.getElementById('history-view').style.display = 'none';
-        document.getElementById('form-view').style.display = 'block';
-      }
+    function showForm() {
+      const historyView = document.getElementById('history-view');
+      const formView = document.getElementById('form-view');
+      if (historyView) historyView.style.display = 'none';
+      if (formView) formView.style.display = 'block';
+    }
 
     function limpiarFormulario() {
+      if (!sectionsContainer) return;
         const inputs = sectionsContainer.querySelectorAll('input, select, textarea');
         inputs.forEach(input => {
-            input.value = '';
-            input.readOnly = false;
-            input.style.background = '';
-            input.style.cursor = '';
+            if (input) {
+              input.value = '';
+              input.readOnly = false;
+              if (input.style) {
+                input.style.background = '';
+                input.style.cursor = '';
+              }
+            }
         });
     }
 
-    function aplicarValorAlInput(input, finalValue) {
-      if (finalValue === undefined || finalValue === null || finalValue === '') return;
-      if (input.type === 'checkbox') { input.checked = finalValue === true || finalValue === 'true' || finalValue === '1'; return; }
-      if (input.type === 'date' && typeof finalValue === 'string') { input.value = finalValue.split('T')[0]; }
-      else if (input.type === 'datetime-local' && typeof finalValue === 'string') { input.value = finalValue.length >= 16 ? finalValue.slice(0, 16) : finalValue; }
-      else { input.value = String(finalValue); }
-    
-      // Bloquear campos de identificación del paciente
-      if (input.id.startsWith('identificacion_usuario__')) {
-        input.readOnly = true;
-        input.style.background = '#f7fafc';
-        input.style.cursor = 'not-allowed';
-      }
-    }
+function aplicarValorAlInput(input, finalValue) {
+       if (!input) return;
+       if (finalValue === undefined || finalValue === null || finalValue === '') return;
+       if (input.type === 'checkbox') { input.checked = finalValue === true || finalValue === 'true' || finalValue === '1'; return; }
+       if (input.type === 'date' && typeof finalValue === 'string') { input.value = finalValue.split('T')[0]; }
+       else if (input.type === 'datetime-local' && typeof finalValue === 'string') { input.value = finalValue.length >= 16 ? finalValue.slice(0, 16) : finalValue; }
+       else { input.value = String(finalValue); }
+     
+       // Bloquear campos de identificación del paciente
+       if (input.id && input.id.startsWith('identificacion_usuario__')) {
+         input.readOnly = true;
+         if (input.style) {
+           input.style.background = '#f7fafc';
+           input.style.cursor = 'not-allowed';
+         }
+       }
+     }
 
 function aplicarDatosAlFormulario(schema, data) {
     if (!schema) return;

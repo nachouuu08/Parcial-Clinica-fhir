@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -10,6 +11,7 @@ app.use('/static', express.static(path.join(__dirname, 'static')));
 
 const SEDE_ACTUAL = process.env.SEDE_ACTUAL || 'Sincelejo';
 const JWT_SECRET = process.env.JWT_SECRET || 'clave_secreta_smart_on_fhir_2026';
+const SYNC_QUEUE_FILE = path.join(process.cwd(), 'sync_queue.json');
 
 const pool = new Pool({
     user: 'admin_clinica',
@@ -27,11 +29,47 @@ const globalPool = new Pool({
     host: process.env.GLOBAL_DB_HOST || 'db_global'
 });
 
+function guardarEnCola(sedeDestino, datos, tipo) {
+    let cola = [];
+    if (fs.existsSync(SYNC_QUEUE_FILE)) {
+        try { cola = JSON.parse(fs.readFileSync(SYNC_QUEUE_FILE, 'utf8')); } catch {}
+    }
+    cola.push({ sede: sedeDestino, tipo, datos, timestamp: Date.now(), intentos: 0 });
+    fs.writeFileSync(SYNC_QUEUE_FILE, JSON.stringify(cola, null, 2));
+}
+
+async function procesarCola() {
+    if (!fs.existsSync(SYNC_QUEUE_FILE)) return;
+    let cola = [];
+    try { cola = JSON.parse(fs.readFileSync(SYNC_QUEUE_FILE, 'utf8')); } catch { return; }
+    const pendientes = [];
+    for (const item of cola) {
+        const host = SEDE_HOSTS_REPL[item.sede];
+        if (!host) continue;
+        try {
+            const endpoint = item.tipo === 'triage' ? '/api/triage' : '/api/firh/cargar';
+            const response = await fetch(`http://${host}:3000${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(item.tipo === 'triage' ? item.datos : { tabla: 'completo', datos: item.datos })
+            });
+            if (response.ok) console.log(`[SYNC] Aplicado a ${item.sede}`);
+            else throw new Error(`HTTP ${response.status}`);
+        } catch (err) {
+            item.intentos = (item.intentos || 0) + 1;
+            if (item.intentos < 30) pendientes.push(item);
+            else console.error(`[SYNC] Falló ${item.tipo} en ${item.sede} tras ${item.intentos} intentos`);
+        }
+    }
+    fs.writeFileSync(SYNC_QUEUE_FILE, JSON.stringify(pendientes, null, 2));
+}
+
+const SEDE_HOSTS_REPL = { Sincelejo: 'app_sincelejo', Bogota: 'app_bogota', Medellin: 'app_medellin', Registro: 'gateway_registro', FIRH: 'gateway_firh', Triage: 'gateway_triage' };
+setInterval(procesarCola, 5000);
+
 async function replicarFhirATodasSedes(fhirData) {
-    // Usar nombres de contenedor para comunicación interna
-    const sedeHosts = { Sincelejo: 'app_sincelejo', Bogota: 'app_bogota', Medellin: 'app_medellin' };
+    const sedeHosts = { Sincelejo: 'app_sincelejo', Bogota: 'app_bogota', Medellin: 'app_medellin', Registro: 'gateway_registro', FIRH: 'gateway_firh', Triage: 'gateway_triage' };
     for (const [sede, host] of Object.entries(sedeHosts)) {
-        // No replicar a la sede actual para evitar bucles innecesarios
         if (sede === SEDE_ACTUAL) {
             continue;
         }
@@ -49,6 +87,7 @@ async function replicarFhirATodasSedes(fhirData) {
             }
             console.log(`[FIRH] Replicado a ${sede}`);
         } catch (err) {
+            guardarEnCola(sede, fhirData, 'firh');
             console.warn(`[FIRH] No se pudo replicar a ${sede}:`, err.message);
         }
     }
@@ -532,10 +571,8 @@ app.post('/api/registro/paciente', async (req, res) => {
 });
 
 async function replicarTriageATodasSedes(triageData) {
-    // Usar nombres de contenedor para comunicación interna
-    const sedeHosts = { Sincelejo: 'app_sincelejo', Bogota: 'app_bogota', Medellin: 'app_medellin' };
+    const sedeHosts = { Sincelejo: 'app_sincelejo', Bogota: 'app_bogota', Medellin: 'app_medellin', Registro: 'gateway_registro', FIRH: 'gateway_firh', Triage: 'gateway_triage' };
     for (const [sede, host] of Object.entries(sedeHosts)) {
-        // No replicar a la sede actual para evitar bucles innecesarios
         if (sede === SEDE_ACTUAL) {
             continue;
         }
@@ -550,6 +587,7 @@ async function replicarTriageATodasSedes(triageData) {
             }
             console.log(`[TRIAGE] Replicado a ${sede}`);
         } catch (err) {
+            guardarEnCola(sede, triageData, 'triage');
             console.warn(`[TRIAGE] No se pudo replicar a ${sede}:`, err.message);
         }
     }

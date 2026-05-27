@@ -491,7 +491,9 @@
 
         const sedeNombre = obtenerSedeDoctor();
         const PUERTOS_SEDES = { Sincelejo: 3001, Bogota: 3002, Medellin: 3003 };
-        const PUERTO_SEDE_ACTUAL = PUERTOS_SEDES[sedeNombre] || 3001;
+        
+        // Siempre usar el gateway_registro (3005) para registro de pacientes
+        const PUERTO_REGISTRO = 3005;
 
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('fechaNacimiento').max = new Date().toISOString().split('T')[0];
@@ -518,7 +520,8 @@
         });
 
         function validarPacienteExiste(pacienteId) {
-            return fetch(`http://${window.location.hostname}:${PUERTO_SEDE_ACTUAL}/api/paciente/${pacienteId}`)
+            // Usar gateway_central (3000) para validar paciente
+            return fetch(`http://${window.location.hostname}:3000/api/paciente/${pacienteId}`)
                 .then(res => res.ok ? res.json() : null)
                 .catch(() => null);
         }
@@ -582,7 +585,7 @@
             };
 
             try {
-                await fetch(`http://${window.location.hostname}:${PUERTO_SEDE_ACTUAL}/api/registro/paciente`, {
+                await fetch(`http://${window.location.hostname}:${PUERTO_REGISTRO}/api/registro/paciente`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -591,7 +594,7 @@
                 document.getElementById('patientForm').reset();
                 document.getElementById('edad').value = '';
                 setTimeout(() => {
-                    window.location.href = `http://localhost:${PUERTO_SEDE_ACTUAL}/consulta-hc`;
+                    window.location.href = `http://localhost:${PUERTOS_SEDES[sedeNombre] || 3001}/consulta-hc`;
                 }, 2000);
             } catch (error) {
                 showAlert(`❌ Error: ${error.message}`, 'error');

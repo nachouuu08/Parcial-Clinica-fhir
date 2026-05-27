@@ -12,6 +12,7 @@ app.use('/static', express.static('static'));
 
 const JWT_SECRET = process.env.JWT_SECRET || 'clave_secreta_smart_on_fhir_2026';
 const PENDING_FILE = path.join(process.cwd(), 'pendientes_registro.json');
+const SYNC_QUEUE_FILE = path.join(process.cwd(), 'sync_queue_registro.json');
 
 const globalPool = new Pool({
     user: 'admin_clinica',
@@ -32,9 +33,10 @@ async function replicarATodasSedes(datos) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(datos)
             });
-            console.log(`[REGISTRO] Replicado a ${sede}`, response.ok ? 'OK' : 'ERROR');
+            console.log(`[REGISTRO] Replicado a ${sede}`, response.ok ? 'OK' : `ERROR ${response.status}`);
         } catch (err) {
-            console.warn(`[REGISTRO] No se pudo replicar a ${sede}:`, err.message);
+            console.error(`[REGISTRO] No se pudo replicar a ${sede}:`, err.message);
+            guardarEnCola(sede, datos, 'registro');
         }
     }
 }
@@ -59,6 +61,48 @@ async function initKafka() {
     catch (err) { console.warn('[REGISTRO] Kafka no disponible:', err.message); }
 }
 initKafka();
+
+// Sincronización pendiente para nodos caídos
+function guardarEnCola(sedeDestino, datos, tipo) {
+    let cola = [];
+    if (fs.existsSync(SYNC_QUEUE_FILE)) {
+        try { cola = JSON.parse(fs.readFileSync(SYNC_QUEUE_FILE, 'utf8')); } catch {}
+    }
+    cola.push({ sede: sedeDestino, tipo, datos, timestamp: Date.now(), intentos: 0 });
+    fs.writeFileSync(SYNC_QUEUE_FILE, JSON.stringify(cola, null, 2));
+}
+
+async function procesarCola() {
+    if (!fs.existsSync(SYNC_QUEUE_FILE)) return;
+    let cola = [];
+    try { cola = JSON.parse(fs.readFileSync(SYNC_QUEUE_FILE, 'utf8')); } catch { return; }
+    const pendientes = [];
+    for (const item of cola) {
+        const host = SEDE_HOSTS[item.sede];
+        if (!host) continue;
+        try {
+            const endpoint = item.tipo === 'triage' ? '/api/triage' : '/api/registro/paciente';
+            const response = await fetch(`http://${host}:3000${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(item.datos)
+            });
+            if (response.ok) {
+                console.log(`[REGISTRO] Sincronizado ${item.tipo} a ${item.sede}`);
+            } else {
+                throw new Error(`HTTP ${response.status}`);
+            }
+        } catch (err) {
+            item.intentos = (item.intentos || 0) + 1;
+            if (item.intentos < 30) pendientes.push(item);
+            else console.error(`[REGISTRO] Falló sincronización a ${item.sede} después de ${item.intentos} intentos`);
+        }
+    }
+    fs.writeFileSync(SYNC_QUEUE_FILE, JSON.stringify(pendientes, null, 2));
+}
+
+// Procesar cola cada 5 segundos
+setInterval(procesarCola, 5000);
 
 app.post('/api/v1/auth/token', (req, res) => {
     const header = { alg: 'HS256', typ: 'JWT' };
@@ -272,9 +316,103 @@ app.get('/api/paciente/:id', async (req, res) => {
     }
 });
 
+app.post('/api/triage', async (req, res) => {
+    const { paciente_id, presion_arterial, frecuencia_cardiaca, temperatura, saturacion_oxigeno, nivel_triage, motivo_consulta } = req.body;
+    if (!paciente_id) return res.status(400).json({ ok: false, detail: 'paciente_id es obligatorio' });
+    if (!nivel_triage) return res.status(400).json({ ok: false, detail: 'nivel_triage es obligatorio' });
+    try {
+        await globalPool.query(
+            `INSERT INTO triage_records (paciente_id, presion_arterial, frecuencia_cardiaca, temperatura, saturacion_oxigeno, nivel_triage, motivo_consulta, sede) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             [paciente_id, presion_arterial, parseInt(frecuencia_cardiaca) || null, parseFloat(temperatura) || null, parseInt(saturacion_oxigeno) || null, parseInt(nivel_triage), motivo_consulta, 'REGISTRO_SERVICE']
+        );
+        // Replicar a TODAS las sedes, encolar si falla
+        for (const sede of Object.keys(SEDE_HOSTS)) {
+            try {
+                const response = await fetch(`http://${SEDE_HOSTS[sede]}:3000/api/triage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...req.body, esReplicado: true })
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            } catch (e) {
+                guardarEnCola(sede, { ...req.body, esReplicado: true }, 'triage');
+            }
+        }
+        res.json({ ok: true, mensaje: 'Triage guardado en BD global y todas las sedes' });
+    } catch (err) {
+        guardarPendiente({ tipo: 'TRIAGE_GUARDADO', ...req.body });
+        res.status(202).json({ ok: true, mensaje: 'Guardado offline para sincronizar después', offline: true });
+    }
+});
+
+app.get('/api/triage/historias', async (req, res) => {
+    const pacienteId = req.query.paciente_id;
+    if (!pacienteId) return res.status(400).json({ detail: 'paciente_id es obligatorio' });
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    try {
+        const result = await globalPool.query(
+            "SELECT * FROM triage_records WHERE paciente_id = $1 ORDER BY fecha_registro DESC LIMIT $2 OFFSET $3",
+            [pacienteId, limit, offset]
+        );
+        const triages = result.rows.map(r => ({
+            id: r.triage_id,
+            paciente_id: r.paciente_id,
+            presion_arterial: r.presion_arterial,
+            frecuencia_cardiaca: r.frecuencia_cardiaca,
+            temperatura: r.temperatura,
+            saturacion_oxigeno: r.saturacion_oxigeno,
+            nivel_triage: r.nivel_triage,
+            motivo_consulta: r.motivo_consulta,
+            sede_actualizacion: r.sede,
+            fecha_actualizacion: r.fecha_registro
+        }));
+        const countRes = await globalPool.query('SELECT COUNT(*) FROM triage_records WHERE paciente_id = $1', [pacienteId]);
+        res.json({ triages, pagination: { total: parseInt(countRes.rows[0].count), limit, offset } });
+    } catch (err) {
+        res.status(500).json({ detail: err.message });
+    }
+});
+
+app.get('/api/v1/fhir/patients', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const size = parseInt(req.query.size) || 10;
+        const offset = (page - 1) * size;
+        const countRes = await globalPool.query('SELECT COUNT(*) FROM pacientes');
+        const total = parseInt(countRes.rows[0].count);
+        const res2 = await globalPool.query(`
+            SELECT p.paciente_id, p.nombre, p.apellido, p.fecha_nacimiento, p.ciudad_registro_origen, p.registrado_por,
+                   m.nombre as medico_nombre, m.apellido as medico_apellido, m.especialidad
+            FROM pacientes p 
+            LEFT JOIN medicos m ON p.registrado_por = m.medico_id
+            ORDER BY p.paciente_id DESC LIMIT $1 OFFSET $2`, [size, offset]);
+        const fhirPatients = res2.rows.map(p => ({
+            id: p.paciente_id,
+            identifier: [{ value: p.paciente_id }],
+            name: [{ text: `${p.nombre} ${p.apellido}` }],
+            gender: 'unknown',
+            birthDate: p.fecha_nacimiento ? p.fecha_nacimiento.toISOString().split('T')[0] : 'N/A',
+            address: [{ city: p.ciudad_registro_origen || 'Global' }],
+            registrado_por: p.registrado_por ? {
+                id: p.registrado_por,
+                nombre: `${p.medico_nombre || ''} ${p.medico_apellido || ''}`.trim(),
+                especialidad: p.especialidad
+            } : null
+        }));
+        res.json({ patients: fhirPatients, total, total_pages: Math.ceil(total / size) || 1 });
+    } catch (err) {
+        res.status(500).json({ detail: err.message });
+    }
+});
+
 app.get('/registro-paciente', (req, res) => res.sendFile(path.join(__dirname, 'registro-paciente.html')));
 app.get('/firh', (req, res) => res.sendFile(path.join(__dirname, 'firh.html')));
 app.get('/paciente/:id', (req, res) => res.sendFile(path.join(__dirname, 'firh.html')));
+app.get('/triage', (req, res) => res.sendFile(path.join(__dirname, 'triage.html')));
+app.get('/reportes', (req, res) => res.sendFile(path.join(__dirname, 'reportes.html')));
+app.get('/monitor-nodos', (req, res) => res.sendFile(path.join(__dirname, 'monitor-nodos.html')));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Registro service escuchando en puerto ${PORT}`));
