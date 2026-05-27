@@ -51,13 +51,12 @@ graph TD
    ```
 3. Acceder al portal principal:
     - Portal de Login: `http://localhost:3004/login-medico` (gateway con autenticación)
-    - **Acceso unificado vía Gateway:** `http://localhost:3005`
-      - `/registro-paciente` - Registro de pacientes
-      - `/consulta-hc` - Consulta de historias clínicas
-      - `/triage?id=<ID>` - Módulo de triage
-      - `/paciente/<ID>` - Historia clínica individual
-      - `/reportes` - Reportes y estadísticas
-      - `/monitor-nodos` - Estado de los nodos
+    - **Acceso vía Gateway:**
+      - `http://localhost:3005/registro-paciente` - Registro de pacientes
+      - `http://localhost:3005/reportes` - Reportes y estadísticas
+      - `http://localhost:3005/monitor-nodos` - Estado de los nodos
+      - `http://localhost:3007/paciente/<ID>` - Historia clínica individual
+      - `http://localhost:3008/triage?id=<ID>` - Módulo de triage
     - Sincelejo: `http://localhost:3001`
     - Bogotá: `http://localhost:3002`
     - Medellín: `http://localhost:3003`
