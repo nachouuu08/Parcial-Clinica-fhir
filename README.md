@@ -2,6 +2,8 @@
 
 Este proyecto implementa un sistema de gestión de historias clínicas distribuido en tres nodos geográficos (Sincelejo, Bogotá y Medellín), utilizando el estándar internacional **FHIR R4** para asegurar la interoperabilidad y **Apache Kafka** para la sincronización de eventos en tiempo real.
 
+nota:, hay botones no funcionales, ya que por prioridad a otros aspectos del servicio, se me olvido arreglarlos
+
 ## 🏗️ Arquitectura del Sistema
 
 La arquitectura está diseñada para ser resiliente y escalable, simulando una red WAN de salud.
