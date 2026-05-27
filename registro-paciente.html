@@ -518,7 +518,7 @@
         });
 
         function validarPacienteExiste(pacienteId) {
-            return fetch(`http://${window.location.hostname}:3005/api/paciente/${pacienteId}`)
+            return fetch(`http://${window.location.hostname}:${PUERTO_SEDE_ACTUAL}/api/paciente/${pacienteId}`)
                 .then(res => res.ok ? res.json() : null)
                 .catch(() => null);
         }
@@ -582,7 +582,7 @@
             };
 
             try {
-                await fetch(`http://${window.location.hostname}:3005/api/registro/paciente`, {
+                await fetch(`http://${window.location.hostname}:${PUERTO_SEDE_ACTUAL}/api/registro/paciente`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
