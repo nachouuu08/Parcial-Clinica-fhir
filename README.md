@@ -49,10 +49,18 @@ graph TD
    ```bash
    docker-compose up -d
    ```
-3. Acceder a los nodos:
-   - Sincelejo: `http://localhost:3001`
-   - Bogotá: `http://localhost:3002`
-   - Medellín: `http://localhost:3003`
+3. Acceder al portal principal:
+    - Portal de Login: `http://localhost:3004` (gateway con autenticación)
+    - **Acceso unificado vía Gateway:** `http://localhost:3005`
+      - `/registro-paciente` - Registro de pacientes
+      - `/consulta-hc` - Consulta de historias clínicas
+      - `/triage?id=<ID>` - Módulo de triage
+      - `/paciente/<ID>` - Historia clínica individual
+      - `/reportes` - Reportes y estadísticas
+      - `/monitor-nodos` - Estado de los nodos
+    - Sincelejo: `http://localhost:3001`
+    - Bogotá: `http://localhost:3002`
+    - Medellín: `http://localhost:3003`
 
 ## 🏥 Estándares y Seguridad
 
@@ -72,7 +80,12 @@ El sistema emula un servidor **Hapi FHIR R4**, exponiendo endpoints estandarizad
 ## 📊 Monitoreo y Métricas
 
 - **Prometheus:** Recolecta métricas de uptime, volumen de peticiones y errores de sincronización de cada nodo en el puerto `9090`.
-- **Grafana:** Visualización de dashboards en el puerto `3005` (Admin: `admin` / `admin`).
+- **Grafana:** Visualización de dashboards en el puerto `3006` (Admin: `admin` / `admin`).
+
+### Acceso Single Page Application (SPA)
+- El gateway en puerto `3005` expone todas las funcionalidades con replicación automática a las sedes.
+- Los datos se guardan en BD global y se replican a otros nodos.
+- Si un nodo está caído, los datos quedan en cola y se sincronizan al recuperarse.
 
 ## 🛠️ Tecnologías Utilizadas
 - **Backend:** Node.js / Express
