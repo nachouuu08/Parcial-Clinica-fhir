@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login Médico - Sistema Distribuido</title>
+    <link rel="stylesheet" href="/static/vendor/fonts.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #1a365d 0%, #2d3748 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .login-card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            padding: 3rem;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .login-header h1 {
+            color: #1a365d;
+            font-size: 1.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .login-header p {
+            color: #718096;
+            font-size: 0.9rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 0.5rem;
+        }
+
+        input {
+            width: 100%;
+            padding: 0.875rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-family: 'Inter', sans-serif;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        button {
+            width: 100%;
+            padding: 1rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        .alert.error {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .alert.show {
+            display: block;
+        }
+
+        .sede-badge {
+            display: inline-block;
+            background: #bee3f8;
+            color: #2b6cb0;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+    </style>
+    <script src="/static/vendor/phosphor-icons.js"></script>
+</head>
+
+<body>
+    <div class="login-card">
+        <div class="login-header">
+            <h1><i class="ph ph-stethoscope"></i> Login Médico</h1>
+            <p>Ingrese su cédula para acceder a su sede</p>
+        </div>
+
+<div id="alert" class="alert error"></div>
+
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="medicoId">Cédula del Médico</label>
+                <input type="text" id="medicoId" placeholder="Ej: MED-001" required>
+                <div id="sedeInfo" class="sede-badge" style="display: none;"></div>
+            </div>
+
+            <button type="submit">Ingresar al Sistema</button>
+        </form>
+    </div>
+
+    <script>
+        const MEDICOS = {
+            'MED-001': { nombre: 'Carlos', apellido: 'Gómez', sede_asignada: 'Sincelejo', especialidad: 'Medicina General' },
+            'MED-002': { nombre: 'Ana', apellido: 'Rodríguez', sede_asignada: 'Bogota', especialidad: 'Medicina Interna' },
+            'MED-003': { nombre: 'Luis', apellido: 'Martínez', sede_asignada: 'Medellin', especialidad: 'Pediatría' }
+        };
+
+        const PUERTOS = { Sincelejo: 3001, Bogota: 3002, Medellin: 3003 };
+
+        function showAlert(msg) {
+            const alert = document.getElementById('alert');
+            alert.textContent = msg;
+            alert.classList.add('show');
+            setTimeout(() => alert.classList.remove('show'), 4000);
+        }
+
+        function generarToken(medico_id, sede) {
+            const header = { alg: 'HS256', typ: 'JWT' };
+            const payload = {
+                iss: 'auth_medico_directo',
+                sub: medico_id,
+                client_id: 'clinica_node',
+                scope: 'patient/*.read patient/*.write',
+                sede: sede,
+                exp: Math.floor(Date.now() / 1000) + 3600
+            };
+            const encode = (obj) => btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+            const tokenParcial = `${encode(JSON.stringify(header))}.${encode(JSON.stringify(payload))}`;
+            return `${tokenParcial}.direct`;
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            
+            const medicoId = document.getElementById('medicoId').value.trim();
+            
+            if (!medicoId) {
+                showAlert('Debe ingresar la cédula del médico');
+                return;
+            }
+
+            const medico = MEDICOS[medicoId];
+            if (!medico) {
+                showAlert('Médico no encontrado en el sistema');
+                return;
+            }
+
+            const sede = medico.sede_asignada;
+            const puertoSede = PUERTOS[sede] || 3001;
+            const token = generarToken(medicoId, sede);
+
+            localStorage.setItem('fhir_access_token', token);
+            localStorage.setItem('medico_actual', JSON.stringify(medico));
+
+            const sedeInfo = document.getElementById('sedeInfo');
+            sedeInfo.textContent = `Sede: ${sede}`;
+            sedeInfo.style.display = 'inline-block';
+
+            setTimeout(() => {
+                window.location.href = `http://localhost:${puertoSede}/consulta-hc`;
+            }, 800);
+        });
+    </script>
+</body>
+
+</html>

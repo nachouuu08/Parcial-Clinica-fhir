@@ -58,3 +58,24 @@ CREATE TABLE IF NOT EXISTS diagnosticos_fhir (
     sede VARCHAR(50) NOT NULL,
     fecha_registro TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Tabla de Médicos con sede asignada - ITEM 6
+CREATE TABLE IF NOT EXISTS medicos (
+    medico_id VARCHAR(50) PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    apellido VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    sede_asignada VARCHAR(50) NOT NULL,
+    especialidad VARCHAR(100),
+    activo BOOLEAN DEFAULT true,
+    fecha_creacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_medicos_sede ON medicos(sede_asignada);
+
+-- Médicos de prueba para cada sede
+INSERT INTO medicos (medico_id, nombre, apellido, email, sede_asignada, especialidad) VALUES
+    ('MED-001', 'Carlos', 'Gómez', 'carlos.gomez@clinica.com', 'Sincelejo', 'Medicina General'),
+    ('MED-002', 'Ana', 'Rodríguez', 'ana.rodriguez@clinica.com', 'Bogota', 'Medicina Interna'),
+    ('MED-003', 'Luis', 'Martínez', 'luis.martinez@clinica.com', 'Medellin', 'Pediatría')
+ON CONFLICT (medico_id) DO NOTHING;

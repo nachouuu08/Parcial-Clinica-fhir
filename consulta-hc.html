@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Consulta de Historias Clínicas - FHIR</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="/static/vendor/fonts.css">
+    <script src="/static/vendor/phosphor-icons.js"></script>
     <style>
         * {
             margin: 0;
@@ -339,6 +339,10 @@
                 Consulta de Historias Clínicas
             </h1>
             <div class="header-actions">
+                <button class="btn btn-primary" onclick="logout()" style="background: #e53e3e;">
+                    <i class="ph ph-sign-out"></i>
+                    Cerrar Sesión
+                </button>
                 <a href="/triage" class="btn btn-primary">
                     <i class="ph ph-heartbeat"></i>
                     Triage
@@ -351,7 +355,7 @@
                     <i class="ph ph-activity"></i>
                     Nodos
                 </a>
-                <a href="/registro-paciente" class="btn btn-primary">
+                <a href="http://localhost:3005/registro-paciente" class="btn btn-primary">
                     <i class="ph ph-plus-circle"></i>
                     Nuevo Paciente
                 </a>
@@ -621,6 +625,12 @@
             setTimeout(() => {
                 alert.classList.remove('show');
             }, 5000);
+        }
+
+        function logout() {
+            localStorage.removeItem('fhir_access_token');
+            localStorage.removeItem('medico_actual');
+            window.location.href = 'http://localhost:3004/login-medico';
         }
     </script>
 </body>

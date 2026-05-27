@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Registro de Paciente - FHIR</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="/static/vendor/fonts.css">
+    <script src="/static/vendor/phosphor-icons.js"></script>
     <style>
         * {
             margin: 0;
@@ -467,63 +467,85 @@
     </div>
 
     <script>
-        // 1. Detectar automáticamente la sede operativa según el puerto de red
-        const puertoActual = window.location.port;
-        let sedeNombre = "Sede Desconocida";
-        if (puertoActual === "3001" || puertoActual === "3000") sedeNombre = "Sincelejo";
-        if (puertoActual === "3002") sedeNombre = "Bogotá";
+        const PUERTOS = { Sincelejo: 3001, Bogota: 3002, Medellin: 3003 };
 
-        document.querySelector('.header p').innerHTML = `Sede Activa: <strong>${sedeNombre}</strong> - Sistema de Historia Clínica Interoperable`;
+        function decodificarJWT(token) {
+            try {
+                const partes = token.split('.');
+                if (partes.length !== 3) return null;
+                const payload = JSON.parse(atob(partes[1].replace(/_/g, '/').replace(/-/g, '+')));
+                return payload;
+            } catch (e) {
+                return null;
+            }
+        }
 
-        // 2. Establecer fecha máxima (hoy) para fecha de nacimiento
-        document.getElementById('fechaNacimiento').max = new Date().toISOString().split('T')[0];
+        function obtenerSedeDoctor() {
+            const token = localStorage.getItem('fhir_access_token');
+            if (!token) return 'Sincelejo';
+            const payload = decodificarJWT(token);
+            if (payload && payload.sede) return payload.sede;
+            return 'Sincelejo';
+        }
 
-        // 3. Calcular edad automáticamente
+        const sedeNombre = obtenerSedeDoctor();
+        const PUERTOS_SEDES = { Sincelejo: 3001, Bogota: 3002, Medellin: 3003 };
+        const PUERTO_SEDE_ACTUAL = PUERTOS_SEDES[sedeNombre] || 3001;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('fechaNacimiento').max = new Date().toISOString().split('T')[0];
+        });
+
         document.getElementById('fechaNacimiento').addEventListener('change', function () {
             const birthDate = new Date(this.value);
             const today = new Date();
             let age = today.getFullYear() - birthDate.getFullYear();
             const monthDiff = today.getMonth() - birthDate.getMonth();
-
-            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-                age--;
-            }
-
+            if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) { age--; }
             document.getElementById('edad').value = age;
         });
 
-        // 4. Mostrar alertas con diseño nativo
-        function showAlert(message, type = 'success') {
-            const alert = document.getElementById('alert');
-            alert.className = `alert ${type} show`;
-            alert.innerHTML = `
-                <i class="ph ph-${type === 'success' ? 'check-circle' : 'warning-circle'}"></i>
-                <span>${message}</span>
-            `;
-
-            setTimeout(() => {
-                alert.classList.remove('show');
-            }, 6000);
+        function validarPacienteExiste(pacienteId) {
+            return fetch(`http://${window.location.hostname}:3005/api/paciente/${pacienteId}`)
+                .then(res => res.ok ? res.json() : null)
+                .catch(() => null);
         }
 
-        // 5. Botón Cancelar redirige a Consultas
+        function showAlert(msg, type) {
+            const alert = document.getElementById('alert');
+            alert.className = 'alert show ' + (type || 'success');
+            alert.innerHTML = '<i class="ph ph-' + (type === 'error' ? 'warning' : 'check') + '"></i><span>' + msg + '</span>';
+            setTimeout(() => alert.classList.remove('show'), 5000);
+        }
+
         function cancelarRegistro() {
             window.location.href = '/';
         }
 
-        // 6. Enviar formulario adaptado a la arquitectura tolerante a fallos
         document.getElementById('patientForm').addEventListener('submit', async function (e) {
             e.preventDefault();
 
             const pacienteId = document.getElementById('numeroDocumento').value;
             const nombreCompleto = document.getElementById('nombreCompleto').value;
+            
+            // Validar que el paciente no exista
+            const existe = await validarPacienteExiste(pacienteId);
+            if (existe && existe.exists) {
+                showAlert(`❌ Paciente con documento ${pacienteId} ya existe: ${existe.paciente.nombre} ${existe.paciente.apellido}`, 'error');
+                return;
+            }
 
-            // Dividir el nombre completo para cumplir con la BD local/central
             const partesNombre = nombreCompleto.split(' ');
             const nombre = partesNombre[0] || 'Sin Nombre';
             const apellido = partesNombre.slice(1).join(' ') || 'Sin Apellido';
+            const sedeDestino = sedeNombre;
+            const token = localStorage.getItem('fhir_access_token');
+            let medicoId = "MED-AUTO-FHIR";
+            if (token) {
+                const payload = decodificarJWT(token);
+                if (payload && payload.sub) medicoId = payload.sub;
+            }
 
-            // Estructura de payload COMPLETA para que server.js pueda llenar el FIRH
             const payload = {
                 paciente_id: pacienteId,
                 tipo_documento: document.getElementById('tipoDocumento').value,
@@ -542,55 +564,25 @@
                 etnia: document.getElementById('etnia').value,
                 categoria_discapacidad: document.getElementById('categoriaDiscapacidad').value,
                 voluntad_anticipada: document.getElementById('voluntadAnticipada').value,
-
-                // Datos para historia clínica y cuestionario
                 version: 1,
-                medico_id: "MED-AUTO-FHIR",
-                diagnostico: "Admisión Regular",
-                tratamiento: "Plan Inicial",
-                tiene_alergias: false,
-                detalle_alergias: "Ninguna",
-                antecedentes_patologicos: "Ninguno",
-                medicamentos_actuales: "Ninguno",
-                contacto_nombre: "N/A", // Se puede añadir campo en el HTML si se desea
-                contacto_telefono: "N/A"
+                medico_id: medicoId,
+                sede_destino: sedeDestino
             };
 
-            // Cambiar UI a modo Loading
-            document.getElementById('loading').classList.add('show');
-            document.getElementById('patientForm').style.display = 'none';
-
             try {
-                const response = await AuthHelper.authenticatedFetch('/api/pacientes', {
+                await fetch(`http://${window.location.hostname}:3005/api/registro/paciente`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-
-                const result = await response.json();
-
-                // Restaurar UI
-                document.getElementById('loading').classList.remove('show');
-                document.getElementById('patientForm').style.display = 'block';
-
-                if (response.ok) {
-                    showAlert(`✅ Paciente registrado en Sede ${result.sede || sedeNombre}. Redirigiendo...`, 'success');
-                    document.getElementById('patientForm').reset();
-                    document.getElementById('edad').value = '';
-
-                    // Esperar 2 segundos para ver la alerta y redirigir a consultas
-                    setTimeout(() => {
-                        window.location.href = '/';
-                    }, 2000);
-                } else {
-                    showAlert(`❌ Error local: ${result.detalle || 'No se pudo procesar la persistencia'}`, 'error');
-                }
+                showAlert(`✅ Paciente registrado en todas las sedes y BD global`, 'success');
+                document.getElementById('patientForm').reset();
+                document.getElementById('edad').value = '';
+                setTimeout(() => {
+                    window.location.href = `http://localhost:${PUERTO_SEDE_ACTUAL}/consulta-hc`;
+                }, 2000);
             } catch (error) {
-                document.getElementById('loading').classList.remove('show');
-                document.getElementById('patientForm').style.display = 'block';
-                showAlert(`❌ Error de conexión con el nodo clínico local: ${error.message}`, 'error');
+                showAlert(`❌ Error: ${error.message}`, 'error');
             }
         });
     </script>

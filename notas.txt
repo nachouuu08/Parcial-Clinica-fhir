@@ -1,0 +1,9 @@
+el registro del paciente debe estar en un nodo distinto a los nodos de las ciudades, de maner de que si se cae el nodo de medellin mientras se registra en medellin, se pueda seguir creando y cuando vuelva a estar disponible el nodo se guarde.
+
+llega el paciente
+se registra desde el nodo general y se guarda dependiendo de en donde se esta, si en medellin o bogota o Sincelejo, (de manera automática)
+se le hace el triage y se pasa al medico (manteniendo la generación de de donde se hizo el lugar)
+
+el paciente debe tener una parte donde se le puedan ver todas las historias clínicas hechas, el fhir, debe guardar cada una de ellas y mostrar las generales de manera automática
+
+se debe hacer un registro de medico, y que al momento de crear una historia clinica se le asigne un medico, algo como perfiles, y que cada medico tenga suciudad registrada, pueda ver todos los pacientes de todas las ciudades, y pueda agregar historias clínicas desde cualquier lugar, de maner de que cuando el paciente registrado en medellin, vaya  abogota, un doctor de bogota pueda verlo registrado, pueda ver su historia clinica general y pueda agregar una nueva

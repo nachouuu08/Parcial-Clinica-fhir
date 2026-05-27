@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Estado de Nodos Regionales - WAN</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="/static/vendor/fonts.css">
+    <script src="/static/vendor/phosphor-icons.js"></script>
     <style>
         * {
             margin: 0;
@@ -236,7 +236,7 @@
                     <i class="ph ph-file-code"></i>
                     Metadata FHIR
                 </a>
-                <a href="http://localhost:3005" target="_blank" class="btn btn-primary" style="background: #f7931e; color: white;">
+                <a href="http://localhost:3006" target="_blank" class="btn btn-primary" style="background: #f7931e; color: white;">
                     <i class="ph ph-chart-pie"></i>
                     Grafana Dashboard
                 </a>
@@ -325,14 +325,12 @@
                             <span id="ping-3003">--</span>
                         </div>
                     </div>
-                </div>
-            </div>
-                </h2>
-                </p>
-                <div id="sync-actions" style="display:flex;flex-wrap:wrap;gap:0.5rem;"></div>
-            </div>
+</div>
+             </div>
+             <div id="sync-actions" style="display:flex;flex-wrap:wrap;gap:0.5rem;"></div>
+             <pre id="sync-result" style="margin-top:1rem;background:#f7fafc;padding:1rem;border-radius:8px;display:none;"></pre>
 
-            <div class="refresh-notice">
+             <div class="refresh-notice">
                 <i class="ph ph-arrows-clockwise"></i>
                 Actualizando estado automáticamente cada 5 segundos en tiempo real.
             </div>

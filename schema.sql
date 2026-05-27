@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS pacientes (
     paciente_id VARCHAR(50) PRIMARY KEY, -- Identificación única (CC, TI, etc.)
     nombre VARCHAR(100) NOT NULL,
     apellido VARCHAR(100) NOT NULL,
+    tipo_documento VARCHAR(10), -- CC, TI, CE, etc.
     fecha_nacimiento DATE NOT NULL,
     ciudad_registro_origen VARCHAR(50) NOT NULL, -- Sede donde se creó (ej: 'Sincelejo')
     firh JSONB, -- Datos adicionales en formato JSON para FIRH
@@ -65,3 +66,18 @@ CREATE TABLE IF NOT EXISTS diagnosticos_fhir (
     sede VARCHAR(50) NOT NULL,
     fecha_registro TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Tabla de Médicos con sede asignada - ITEM 6 (Detección de sede del doctor)
+CREATE TABLE IF NOT EXISTS medicos (
+    medico_id VARCHAR(50) PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    apellido VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    sede_asignada VARCHAR(50) NOT NULL, -- Sincelejo, Bogota, Medellin
+    especialidad VARCHAR(100),
+    activo BOOLEAN DEFAULT true,
+    fecha_creacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Índice para búsquedas rápidas por sede
+CREATE INDEX IF NOT EXISTS idx_medicos_sede ON medicos(sede_asignada);

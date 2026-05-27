@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Módulo de Triage - FHIR</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="/static/vendor/fonts.css">
+    <script src="/static/vendor/phosphor-icons.js"></script>
     <script src="/static/auth-helper.js"></script>
     <style>
         * {
@@ -157,6 +157,14 @@
             align-items: center;
             gap: 0.25rem;
         }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.1rem 0.4rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+        }
     </style>
 </head>
 
@@ -170,6 +178,7 @@
         <div class="header-nav">
             <a href="/" class="nav-link"><i class="ph ph-house"></i> Dashboard</a>
             <a href="/consulta-hc" class="nav-link"><i class="ph ph-folder-open"></i> Consultas</a>
+            <a href="/login-medico" class="nav-link"><i class="ph ph-sign-out"></i> Cerrar Sesión</a>
         </div>
 
         <div class="form-container">
@@ -222,6 +231,11 @@
                     <i class="ph ph-check-circle"></i> Guardar Triage
                 </button>
             </form>
+
+            <div id="history-section" style="margin-top: 3rem; display: none;">
+                <h3 style="margin-bottom: 1rem; color: #2d3748;"><i class="ph ph-clock-counter-clockwise"></i> Historial de Triage (Más reciente primero)</h3>
+                <div id="triage-history-list" style="max-height: 300px; overflow-y: auto;"></div>
+            </div>
         </div>
     </div>
 
@@ -233,8 +247,44 @@
             const id = params.get('id');
             if (id) {
                 document.getElementById('paciente_id').value = id;
+                cargarHistorialTriage(id);
             }
         });
+
+        async function cargarHistorialTriage(pacienteId) {
+            try {
+                const response = await AuthHelper.authenticatedFetch(`/api/triage/historias?paciente_id=${encodeURIComponent(pacienteId)}`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                let allTriages = [];
+                if (response.ok) {
+                    const data = await response.json();
+                    allTriages = data.triages || [];
+                }
+                
+                if (allTriages.length > 0) {
+                    const historySection = document.getElementById('history-section');
+                    const historyList = document.getElementById('triage-history-list');
+                    
+                    historySection.style.display = 'block';
+                    historyList.innerHTML = allTriages.map(t => `
+                        <div style="border-bottom: 1px solid #eee; padding: 12px 0; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong>Nivel ${t.nivel_triage}</strong> - ${t.motivo_consulta || 'Sin motivo'}<br>
+                                <small>${t.presion_arterial || '-'} mmHg | ${t.frecuencia_cardiaca || '-'} LPM | ${t.temperatura || '-'}°C | ${t.saturacion_oxigeno || '-'}% O2</small>
+                            </div>
+                            <div style="text-align: right;">
+                                <span class="pill" style="background: #667eea; color: white;">${t.sede_actualizacion || t.sede || 'N/A'}</span><br>
+                                <small>${new Date(t.fecha_actualizacion || t.fecha_registro).toLocaleString()}</small>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+            } catch (err) {
+                console.error('Error cargando historial:', err);
+            }
+        }
 
         function selectTriage(level) {
             selectedLevel = level;
@@ -246,47 +296,70 @@
             document.querySelector(`.triage-${level}`).classList.add('active');
         }
 
-        document.getElementById('triageForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            if (!selectedLevel) {
-                showAlert('Por favor seleccione un nivel de triage', 'error');
-                return;
-            }
+         document.getElementById('triageForm').addEventListener('submit', async (e) => {
+             e.preventDefault();
+             
+             // Prevenir múltiples envíos
+             if (e.target.dataset.submitting === 'true') {
+                 return;
+             }
+             e.target.dataset.submitting = 'true';
+             
+             if (!selectedLevel) {
+                 showAlert('Por favor seleccione un nivel de triage', 'error');
+                 e.target.dataset.submitting = 'false';
+                 return;
+             }
 
-            const payload = {
-                paciente_id: document.getElementById('paciente_id').value,
-                presion_arterial: document.getElementById('presion').value,
-                frecuencia_cardiaca: parseInt(document.getElementById('frecuencia').value) || 0,
-                temperatura: parseFloat(document.getElementById('temperatura').value) || 0,
-                saturacion_oxigeno: parseInt(document.getElementById('saturacion').value) || 0,
-                nivel_triage: selectedLevel,
-                motivo_consulta: document.getElementById('motivo').value
-            };
+             // Deshabilitar el botón para prevenir envíos múltiples
+             const submitButton = e.target.querySelector('button[type="submit"]');
+             submitButton.disabled = true;
+             submitButton.innerHTML = '<i class="ph ph-loader"></i> Guardando...';
 
-            try {
-                const response = await AuthHelper.authenticatedFetch('/api/triage', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+             const payload = {
+                 paciente_id: document.getElementById('paciente_id').value,
+                 presion_arterial: document.getElementById('presion').value,
+                 frecuencia_cardiaca: parseInt(document.getElementById('frecuencia').value) || 0,
+                 temperatura: parseFloat(document.getElementById('temperatura').value) || 0,
+                 saturacion_oxigeno: parseInt(document.getElementById('saturacion').value) || 0,
+                 nivel_triage: selectedLevel,
+                 motivo_consulta: document.getElementById('motivo').value
+             };
 
-                const result = await response.json();
+             try {
+                 const response = await AuthHelper.authenticatedFetch('/api/triage', {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify(payload)
+                 });
 
-                if (response.ok) {
-                    showAlert('✅ Triage registrado correctamente y sincronizado en la red.', 'success');
-                    document.getElementById('triageForm').reset();
-                    document.querySelectorAll('.triage-btn').forEach(b => b.classList.remove('active'));
-                    selectedLevel = null;
-                } else {
-                    showAlert('❌ Error: ' + (result.detalle || 'No se pudo guardar'), 'error');
-                }
-            } catch (error) {
-                showAlert('❌ Error de conexión: ' + error.message, 'error');
-            }
-        });
+                 const result = await response.json();
 
-        function showAlert(msg, type) {
+                 if (response.ok) {
+                     showAlert('✅ Triage registrado correctamente y sincronizado en la red.', 'success');
+                     document.getElementById('triageForm').reset();
+                     document.querySelectorAll('.triage-btn').forEach(b => b.classList.remove('active'));
+                     selectedLevel = null;
+                     // Recargar historial para mostrar el nuevo triage
+                     const pacienteId = document.getElementById('paciente_id').value;
+                     if (pacienteId) {
+                         cargarHistorialTriage(pacienteId);
+                     }
+                 } else {
+                     showAlert('❌ Error: ' + (result.detalle || result.detail || 'No se pudo guardar'), 'error');
+                 }
+             } catch (error) {
+                 showAlert('❌ Error de conexión: ' + error.message, 'error');
+             } finally {
+                 // Re-habilitar el botón y resetear flag
+                 const submitButton = e.target.querySelector('button[type="submit"]');
+                 submitButton.disabled = false;
+                 submitButton.innerHTML = '<i class="ph ph-check-circle"></i> Guardar Triage';
+                 e.target.dataset.submitting = 'false';
+             }
+});
+
+         function showAlert(msg, type) {
             const alert = document.getElementById('alert');
             alert.textContent = msg;
             alert.className = `alert ${type} show`;
