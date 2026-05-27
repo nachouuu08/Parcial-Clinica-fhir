@@ -251,6 +251,7 @@
                 <i class="ph ph-user-circle-plus"></i>
                 Registro de Paciente
             </h1>
+            <p id="doctor-info" style="opacity:0.9;font-size:0.95rem;margin-top:0.5rem;"></p>
             <p>Sistema de Historia Clínica Interoperable - FHIR R4</p>
         </div>
 
@@ -494,7 +495,18 @@
 
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('fechaNacimiento').max = new Date().toISOString().split('T')[0];
+            mostrarDoctor();
         });
+
+        function mostrarDoctor() {
+            const medico = JSON.parse(localStorage.getItem('medico_actual') || '{}');
+            const doctorInfo = document.getElementById('doctor-info');
+            if (medico.nombre && medico.apellido) {
+                doctorInfo.textContent = `Dr. ${medico.nombre} ${medico.apellido} - ${medico.especialidad || ''} (${medico.sede_asignada || ''})`;
+            } else {
+                doctorInfo.textContent = 'Médico no identificado';
+            }
+        }
 
         document.getElementById('fechaNacimiento').addEventListener('change', function () {
             const birthDate = new Date(this.value);

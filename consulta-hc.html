@@ -33,10 +33,14 @@
         .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 2rem;
+            padding: 1.5rem 2rem 1rem;
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
+        }
+
+        .header-content {
+            flex: 1;
         }
 
         .header h1 {
@@ -45,6 +49,19 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
+        }
+
+        .doctor-badge {
+            margin-top: 0.5rem;
+            font-size: 0.85rem;
+            opacity: 0.9;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .doctor-badge i {
+            font-size: 1rem;
         }
 
         .header-actions {
@@ -334,10 +351,16 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>
-                <i class="ph ph-folder-open"></i>
-                Consulta de Historias Clínicas
-            </h1>
+            <div class="header-content">
+                <h1>
+                    <i class="ph ph-folder-open"></i>
+                    Consulta de Historias Clínicas
+                </h1>
+                <div id="doctor-info" class="doctor-badge">
+                    <i class="ph ph-stethoscope"></i>
+                    <span id="doctor-details">Cargando médico...</span>
+                </div>
+            </div>
             <div class="header-actions">
                 <button class="btn btn-primary" onclick="logout()" style="background: #e53e3e;">
                     <i class="ph ph-sign-out"></i>
@@ -433,7 +456,18 @@
 
         window.addEventListener('DOMContentLoaded', () => {
             loadPatients();
+            mostrarDoctor();
         });
+
+        function mostrarDoctor() {
+            const medico = JSON.parse(localStorage.getItem('medico_actual') || '{}');
+            const doctorDetails = document.getElementById('doctor-details');
+            if (medico.nombre && medico.apellido) {
+                doctorDetails.innerHTML = `Dr. ${medico.nombre} ${medico.apellido} • ${medico.especialidad || ''} • Sede: ${medico.sede_asignada || ''}`;
+            } else {
+                doctorDetails.textContent = 'Sin médico identificado';
+            }
+        }
 
         document.getElementById('searchInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
