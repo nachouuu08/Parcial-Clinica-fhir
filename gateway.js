@@ -286,14 +286,24 @@ app.get('/api/v1/fhir/patients', async (req, res) => {
         const offset = (page - 1) * size;
         const countRes = await globalPool.query('SELECT COUNT(*) FROM pacientes');
         const total = parseInt(countRes.rows[0].count);
-        const res2 = await globalPool.query('SELECT paciente_id, nombre, apellido, fecha_nacimiento, ciudad_registro_origen FROM pacientes ORDER BY paciente_id DESC LIMIT $1 OFFSET $2', [size, offset]);
+        const res2 = await globalPool.query(`
+            SELECT p.paciente_id, p.nombre, p.apellido, p.fecha_nacimiento, p.ciudad_registro_origen, p.registrado_por,
+                   m.nombre as medico_nombre, m.apellido as medico_apellido, m.especialidad
+            FROM pacientes p 
+            LEFT JOIN medicos m ON p.registrado_por = m.medico_id
+            ORDER BY p.paciente_id DESC LIMIT $1 OFFSET $2`, [size, offset]);
         const fhirPatients = res2.rows.map(p => ({
             id: p.paciente_id,
             identifier: [{ value: p.paciente_id }],
             name: [{ text: `${p.nombre} ${p.apellido}` }],
             gender: 'unknown',
             birthDate: p.fecha_nacimiento ? p.fecha_nacimiento.toISOString().split('T')[0] : 'N/A',
-            address: [{ city: p.ciudad_registro_origen || 'Global' }]
+            address: [{ city: p.ciudad_registro_origen || 'Global' }],
+            registrado_por: p.registrado_por ? {
+                id: p.registrado_por,
+                nombre: `${p.medico_nombre || ''} ${p.medico_apellido || ''}`.trim(),
+                especialidad: p.especialidad
+            } : null
         }));
         res.json({ patients: fhirPatients, total, total_pages: Math.ceil(total / size) || 1 });
     } catch (err) {

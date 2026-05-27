@@ -429,16 +429,17 @@
             <div id="patientsContainer" style="display: none;">
                 <table class="patients-table">
                     <thead>
-                        <tr>
-                            <th>ID FHIR</th>
-                            <th>Documento</th>
-                            <th>Nombre Completo</th>
-                            <th>Sexo</th>
-                            <th>Fecha Nacimiento</th>
-                            <th>Edad</th>
-                            <th>Municipio</th>
-                            <th>Acciones</th>
-                        </tr>
+<tr>
+                             <th>ID FHIR</th>
+                             <th>Documento</th>
+                             <th>Nombre Completo</th>
+                             <th>Sexo</th>
+                             <th>Fecha Nacimiento</th>
+                             <th>Edad</th>
+                             <th>Municipio</th>
+                             <th>Registrado por</th>
+                             <th>Acciones</th>
+                         </tr>
                     </thead>
                     <tbody id="patientsTableBody">
                     </tbody>
@@ -559,6 +560,10 @@
                     'unknown': '<span class="badge badge-other">No especificado</span>'
                 }[gender];
 
+                const doctor = patient.registrado_por ? 
+                    `<span style="background:#ebf4ff;color:#2b6cb0;padding:0.2rem 0.5rem;border-radius:5px;font-size:0.75rem;font-weight:600;">${patient.registrado_por.nombre || patient.registrado_por.id}<br><small>${patient.registrado_por.especialidad || ''}</small></span>` :
+                    '<span style="color:#a0aec0;font-size:0.85rem;">Sistema</span>';
+
                 return `
                     <tr>
                         <td><strong>${id}</strong></td>
@@ -568,6 +573,7 @@
                         <td>${birthDate}</td>
                         <td>${age} años</td>
                         <td>${city}</td>
+                        <td>${doctor}</td>
                         <td>
                             <div style="display: flex; gap: 5px;">
                                 <a href="/paciente/${id}" class="btn-view">

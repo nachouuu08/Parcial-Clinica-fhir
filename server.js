@@ -463,14 +463,24 @@ app.get('/api/v1/fhir/patients', async (req, res) => {
         const offset = (page - 1) * size;
         const countRes = await pool.query('SELECT COUNT(*) FROM pacientes');
         const total = parseInt(countRes.rows[0].count);
-        const res2 = await pool.query('SELECT paciente_id, nombre, apellido, fecha_nacimiento, ciudad_registro_origen FROM pacientes ORDER BY paciente_id DESC LIMIT $1 OFFSET $2', [size, offset]);
+        const res2 = await pool.query(`
+            SELECT p.paciente_id, p.nombre, p.apellido, p.fecha_nacimiento, p.ciudad_registro_origen, p.registrado_por, 
+                   m.nombre as medico_nombre, m.apellido as medico_apellido, m.especialidad
+            FROM pacientes p 
+            LEFT JOIN medicos m ON p.registrado_por = m.medico_id
+            ORDER BY p.paciente_id DESC LIMIT $1 OFFSET $2`, [size, offset]);
         const fhirPatients = res2.rows.map(p => ({
             id: p.paciente_id,
             identifier: [{ value: p.paciente_id }],
             name: [{ text: `${p.nombre} ${p.apellido}` }],
             gender: 'unknown',
             birthDate: p.fecha_nacimiento ? p.fecha_nacimiento.toISOString().split('T')[0] : 'N/A',
-            address: [{ city: p.ciudad_registro_origen || SEDE_ACTUAL }]
+            address: [{ city: p.ciudad_registro_origen || SEDE_ACTUAL }],
+            registrado_por: p.registrado_por ? {
+                id: p.registrado_por,
+                nombre: `${p.medico_nombre || ''} ${p.medico_apellido || ''}`,
+                especialidad: p.especialidad
+            } : null
         }));
         res.json({ patients: fhirPatients, total, total_pages: Math.ceil(total / size) || 1 });
     } catch (err) {
@@ -493,17 +503,18 @@ app.get('/monitor-nodos', (req, res) => res.sendFile(path.join(__dirname, 'monit
 
 app.post('/api/registro/paciente', async (req, res) => {
     const datos = req.body || {};
-    const { paciente_id, nombre, apellido, fecha_nacimiento, tipo_documento } = datos;
+    const { paciente_id, nombre, apellido, fecha_nacimiento, tipo_documento, registrado_por } = datos;
     if (!paciente_id) return res.status(400).json({ ok: false, detail: 'paciente_id es obligatorio' });
     try {
         await pool.query(
-            `INSERT INTO pacientes (paciente_id, nombre, apellido, tipo_documento, fecha_nacimiento, ciudad_registro_origen) 
-             VALUES ($1, $2, $3, $4, $5, $6) 
+            `INSERT INTO pacientes (paciente_id, nombre, apellido, tipo_documento, fecha_nacimiento, ciudad_registro_origen, registrado_por) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
              ON CONFLICT (paciente_id) DO UPDATE 
              SET nombre = EXCLUDED.nombre, apellido = EXCLUDED.apellido, 
                  tipo_documento = EXCLUDED.tipo_documento,
-                 fecha_nacimiento = EXCLUDED.fecha_nacimiento`,
-            [paciente_id, nombre || 'Sin nombre', apellido || 'Sin apellido', tipo_documento || 'CC', fecha_nacimiento || new Date().toISOString().split('T')[0], SEDE_ACTUAL]
+                 fecha_nacimiento = EXCLUDED.fecha_nacimiento,
+                 registrado_por = COALESCE(EXCLUDED.registrado_por, pacientes.registrado_por)`,
+            [paciente_id, nombre || 'Sin nombre', apellido || 'Sin apellido', tipo_documento || 'CC', fecha_nacimiento || new Date().toISOString().split('T')[0], SEDE_ACTUAL, registrado_por || null]
         );
         res.json({ ok: true, mensaje: `Paciente guardado en nodo ${SEDE_ACTUAL}` });
     } catch (err) {

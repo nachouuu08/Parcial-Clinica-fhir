@@ -1,12 +1,13 @@
 -- Tabla principal de Pacientes (Datos demográficos base)
 CREATE TABLE IF NOT EXISTS pacientes (
-    paciente_id VARCHAR(50) PRIMARY KEY, -- Identificación única (CC, TI, etc.)
+    paciente_id VARCHAR(50) PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL,
     apellido VARCHAR(100) NOT NULL,
-    tipo_documento VARCHAR(10), -- CC, TI, CE, etc.
+    tipo_documento VARCHAR(10),
     fecha_nacimiento DATE NOT NULL,
-    ciudad_registro_origen VARCHAR(50) NOT NULL, -- Sede donde se creó (ej: 'Sincelejo')
-    firh JSONB, -- Datos adicionales en formato JSON para FIRH
+    ciudad_registro_origen VARCHAR(50) NOT NULL,
+    registrado_por VARCHAR(50), -- medico_id que registró al paciente
+    firh JSONB,
     fecha_creacion TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
