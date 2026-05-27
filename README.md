@@ -94,4 +94,3 @@ El sistema emula un servidor **Hapi FHIR R4**, exponiendo endpoints estandarizad
 <img width="832" height="934" alt="image" src="https://github.com/user-attachments/assets/108c64d3-bdd5-4187-8622-cf19fbcbab5f" />
 
 <img width="1241" height="547" alt="image" src="https://github.com/user-attachments/assets/d2dc3b36-7a54-4a67-bb75-5a2b2fa65cac" />
-
